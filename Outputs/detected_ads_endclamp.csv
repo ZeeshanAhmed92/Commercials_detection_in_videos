@@ -1,0 +1,18 @@
+Segment No,Label,Start Time,End Time,Duration(s),Ad_ID,Avg_Score,Type,SourceFile
+1,Ad,00:00:00,00:00:14,13.715,godrej no. 1,1.0,Partial,0700.mpd.wav
+2,Ad,00:00:32,00:00:52,20.096,kurkure-hindi 20sec,0.768,Full,0700.mpd.wav
+3,Ad,00:03:01,00:03:12,10.124,relaxo-hindi-10secs,1.0,Full,0700.mpd.wav
+4,Ad,00:08:21,00:08:46,24.901,cadbury-hindi-25sec,0.406,Full,0700.mpd.wav
+5,Ad,00:08:47,00:09:07,20.085,godrej no. 1,1.0,Full,0700.mpd.wav
+6,Ad,00:12:41,00:12:52,10.124,relaxo-hindi-10secs,1.0,Full,0700.mpd.wav
+7,Ad,00:21:01,00:21:07,5.535,relaxo-hindi-10secs,0.881,Partial,0700.mpd.wav
+8,Ad,00:02:22,00:02:42,20.096,kurkure-hindi 20sec,0.797,Full,0800.mpd.wav
+9,Ad,00:04:07,00:04:27,20.085,godrej no. 1,1.0,Full,0800.mpd.wav
+10,Ad,00:05:32,00:05:35,2.496,relaxo-hindi-10secs,0.274,Partial,0800.mpd.wav
+11,Ad,00:05:44,00:05:53,9.136,relaxo-hindi-10secs,0.855,Full,0800.mpd.wav
+12,Ad,00:54:05,00:54:25,20.085,godrej no. 1,1.0,Full,0800.mpd.wav
+13,Ad,00:33:56,00:34:16,20.085,godrej no. 1,1.0,Full,1900.mpd.wav
+14,Ad,00:37:01,00:37:21,20.096,kurkure-hindi 20sec,0.87,Full,1900.mpd.wav
+15,Ad,00:53:01,00:53:21,20.096,kurkure-hindi 20sec,0.922,Full,1900.mpd.wav
+16,Ad,00:54:16,00:54:36,20.085,godrej no. 1,1.0,Full,1900.mpd.wav
+17,Ad,00:56:16,00:56:26,10.124,relaxo-hindi-10secs,1.0,Full,1900.mpd.wav

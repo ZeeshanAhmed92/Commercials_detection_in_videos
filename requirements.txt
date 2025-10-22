@@ -1,0 +1,8 @@
+tqdm
+numpy
+librosa
+scipy
+pandas
+fastdtw
+matplotlib
+seaborn

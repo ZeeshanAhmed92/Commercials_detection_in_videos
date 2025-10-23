@@ -34,13 +34,13 @@ AMP_MIN_DB = -65
 PEAK_NEIGH_FREQ = 30
 PEAK_NEIGH_TIME = 15
 
-FAN_VALUE = 15
+FAN_VALUE = 20
 MAX_TIME_DELTA = 300
 HASH_TRUNCATE = 20
 DELTA_BIN_SIZE = 0.2
 MIN_DETECTION_SEC = 2.0
 MIN_CONFIDENCE = 0.2
-MERGE_GAP = 2.0
+MERGE_GAP = 3.0
 
 LOCAL_MARGIN = 2.0
 CORR_THRESHOLD = 0.4
@@ -168,7 +168,7 @@ def refine_boundaries(mixed_y, ad_y, sr, coarse_s, coarse_e, t_max_mix, canonica
 
     # Optionally clamp to canonical if detection seems full
     if canonical_dur is not None:
-        if abs((e2 - s2) - canonical_dur) < (canonical_dur * 0.3):
+        if abs((e2 - s2) - canonical_dur) < (canonical_dur * 0.25):
             e2 = s2 + canonical_dur
             
     # Add a safety net based on t_max_mix, but only if e2 is far off.
@@ -181,6 +181,8 @@ def refine_boundaries(mixed_y, ad_y, sr, coarse_s, coarse_e, t_max_mix, canonica
     if e2 <= s2:
         return coarse_s, coarse_e
     return s2, e2
+
+
 
 
 def detect_for_file(mixed_path, fp_index, ad_durations, ad_min_hash_time):

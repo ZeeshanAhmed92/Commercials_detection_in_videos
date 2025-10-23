@@ -90,7 +90,7 @@ MIXED_VIDEO_FOLDER = "Inputs/videos"
 ADS_AUDIO_FOLDER = "Outputs/ads_fingerprints"
 MIXED_AUDIO_FOLDER = "Outputs/video_to_audio"
 
-SUPPORTED_VIDEO_FORMATS = (".mp4", ".mkv", ".avi", ".mov", ".flv")
+SUPPORTED_VIDEO_FORMATS = (".mp4", ".mkv", ".avi", ".mov", ".flv", ".ts")
 
 # CREATE OUTPUT DIRS
 os.makedirs(ADS_AUDIO_FOLDER, exist_ok=True)
@@ -121,7 +121,7 @@ def extract_audio(input_path, output_path):
         return f"[ERROR] {os.path.basename(input_path)} → {e}"
 
 
-def convert_videos_to_audio(input_folder, output_folder, max_workers=6):
+def convert_videos_to_audio(input_folder, output_folder, max_workers=7):
     """
     Convert all videos in input_folder to WAV audio in output_folder using threads.
     """

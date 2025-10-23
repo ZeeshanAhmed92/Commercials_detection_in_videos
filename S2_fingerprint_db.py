@@ -36,12 +36,12 @@ DB_PATH = "Outputs/DB/ads_fingerprints.db"
 SR_EXPECTED = 16000      # expected sample rate from Step 1
 N_FFT = 2048
 HOP_LENGTH = 512
-AMP_MIN_DB_ADV = -50         # peaks below this (dB rel to max) are ignored
+AMP_MIN_DB_ADV = -65         # peaks below this (dB rel to max) are ignored
 PEAK_NEIGHBORHOOD_FREQ = 30   # frequency neighborhood size (bins)
 PEAK_NEIGHBORHOOD_TIME = 15   # time neighborhood size (frames)
 
 # Landmark pairing params
-FAN_VALUE = 15           # how many neighbor peaks to pair with (Shazam uses small fan)
+FAN_VALUE = 20           # how many neighbor peaks to pair with (Shazam uses small fan)
 MAX_TIME_DELTA = 300     # max frames between peak pairs (in frames)
 HASH_TRUNCATE = 20       # characters of sha1 hex to store (reduces DB size)
 BATCH_INSERT_SIZE = 5000

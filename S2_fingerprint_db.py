@@ -49,30 +49,46 @@ BATCH_INSERT_SIZE = 5000
 
 def init_db(db_path):
     """
-    Create tables and ensure content_hash column exists in files table.
+    Create tables and ensure required columns exist (including 'language').
     """
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+
     # create tables if not exist
     cur.execute("""
         CREATE TABLE IF NOT EXISTS files (
             ad_id TEXT PRIMARY KEY,
             filename TEXT,
             duration REAL,
-            content_hash TEXT
+            content_hash TEXT,
+            language TEXT
         )
     """)
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS fingerprints (
             hash TEXT,
             ad_id TEXT,
-            time_offset REAL
+            time_offset REAL,
+            language TEXT
         )
     """)
+
+    # ensure columns exist for backward compatibility
+    for table, column in [("files", "language"), ("fingerprints", "language")]:
+        try:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+        except sqlite3.OperationalError:
+            # column already exists
+            pass
+
     cur.execute("CREATE INDEX IF NOT EXISTS idx_hash ON fingerprints(hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_ad ON fingerprints(ad_id)")
+
     conn.commit()
     conn.close()
+
+
 
 def compute_adv_peaks(y, sr,
                   n_fft=N_FFT, hop_length=HOP_LENGTH,
@@ -130,20 +146,26 @@ def process_file(file_path):
     hashes = generate_ads_hashes_from_peaks(peaks, hop_length=HOP_LENGTH, sr=sr)
     return hashes, duration, y
 
-def add_hashes_to_db(db_path, ad_id, filename, duration, hashes, content_hash=None):
+def add_hashes_to_db(db_path, ad_id, filename, duration, hashes, content_hash=None, language=None):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+
     # upsert file record with content_hash (if provided)
     cur.execute("""
-        INSERT OR REPLACE INTO files (ad_id, filename, duration, content_hash)
-        VALUES (?, ?, ?, ?)
-    """, (ad_id, filename, duration, content_hash))
-    # insert fingerprints in batches
-    to_insert = [(h, ad_id, t) for (h, t) in hashes]
+        INSERT OR REPLACE INTO files (ad_id, filename, duration, content_hash, language)
+        VALUES (?, ?, ?, ?, ?)
+    """, (ad_id, filename, duration, content_hash, language))
+
+    # insert fingerprints in batches (with language)
+    to_insert = [(h, ad_id, t, language) for (h, t) in hashes]
     for i in range(0, len(to_insert), BATCH_INSERT_SIZE):
         batch = to_insert[i:i+BATCH_INSERT_SIZE]
-        cur.executemany("INSERT INTO fingerprints (hash, ad_id, time_offset) VALUES (?, ?, ?)", batch)
+        cur.executemany(
+            "INSERT INTO fingerprints (hash, ad_id, time_offset, language) VALUES (?, ?, ?, ?)",
+            batch
+        )
         conn.commit()
+
     conn.close()
 
 def compute_content_hash_from_samples(y):
@@ -158,29 +180,34 @@ def compute_content_hash_from_samples(y):
 
 def run_flow():
     init_db(DB_PATH)
-    files = [f for f in os.listdir(ADS_AUDIO_FOLDER) if f.lower().endswith(".wav")]
+
+    # recursively collect .wav files
+    files = []
+    for root, _, filenames in os.walk(ADS_AUDIO_FOLDER):
+        for f in filenames:
+            if f.lower().endswith(".wav"):
+                files.append(os.path.join(root, f))
+
     print(f"Found {len(files)} audio files in ads folder.")
 
     total_hashes = 0
     start_time = time.time()
 
-    # open DB connection for existence checks
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    for fname in tqdm(files, desc="Processing ads"):
-        path = os.path.join(ADS_AUDIO_FOLDER, fname)
-        ad_id = os.path.splitext(fname)[0]  
+    for path in tqdm(files, desc="Processing ads"):
+        fname = os.path.basename(path)
+        ad_id = os.path.splitext(fname)[0]
+        language = os.path.basename(os.path.dirname(path))  # folder name
 
         try:
-           
             hashes, duration, y_resampled = process_file(path)
             content_hash = compute_content_hash_from_samples(y_resampled)
         except Exception as e:
-            print(f"\nError processing {fname}: {e}")
+            print(f"\nError processing {path}: {e}")
             continue
 
-        # check if content_hash already exists in DB
         cur.execute("SELECT ad_id, filename FROM files WHERE content_hash=?", (content_hash,))
         found = cur.fetchone()
         if found:
@@ -188,12 +215,12 @@ def run_flow():
             print(f"Skipping {fname} — already in DB as '{existing_fn}' (ad_id={existing_ad_id})")
             continue
 
-        # not found then insert file and fingerprints
-        add_hashes_to_db(DB_PATH, ad_id, fname, duration, hashes, content_hash=content_hash)
+        add_hashes_to_db(DB_PATH, ad_id, fname, duration, hashes, content_hash=content_hash, language=language)
         total_hashes += len(hashes)
 
     conn.close()
     elapsed = time.time() - start_time
     print(f"\nDone. Total hashes stored: ~{total_hashes}. Time elapsed: {elapsed:.1f}s")
     print(f"DB saved to: {DB_PATH}")
+
 

@@ -4,3 +4,4 @@ librosa
 scipy
 pandas
 psutil
+flask

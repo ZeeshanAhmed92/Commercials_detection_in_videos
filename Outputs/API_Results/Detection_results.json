@@ -1,0 +1,17 @@
+[
+    {
+        "Segment No":1,
+        "Channel":"NDTVIndia",
+        "Date":"20251206",
+        "Time":"10",
+        "Label":"Ad",
+        "Ad Name":"saloni oil VO",
+        "Language":"Hindi",
+        "Start Time":"10:25:03 AM",
+        "End Time":"10:25:23 AM",
+        "Duration(s)":19.969,
+        "Avg_Score":1.0,
+        "Type":"Full",
+        "SourceFile":"1000.mpd.wav"
+    }
+]

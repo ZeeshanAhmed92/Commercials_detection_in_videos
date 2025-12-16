@@ -1,23 +1,36 @@
-# In utils.py
-
+# =============================================================
+#   IMPORTS
+# =============================================================
+import os
+import time
+import json
+import psutil
+import pandas as pd
+import multiprocessing
+import concurrent.futures
 from S1_preprocessing_aud import convert_ads_and_videos
 from S2_fingerprint_db import run_flow
-# Make sure this import is correct:
-from S3_scan_test_improved_latest import detect_ads # Assuming this is your modified file
-import time
-import pandas as pd
-import os
-import psutil
-import multiprocessing # Import for setting default workers
+from S3_scan_test_improved_latest import detect_ads
 
-def run_full_pipeline(channel, date, time_sel, base_path, ads_language="Hindi", num_workers=None): # ADD num_workers
+
+def run_full_pipeline(channel, date, time_sel, base_path, ads_language="Hindi", num_workers=None):
     """
-    Full pipeline with an option for parallel workers in detection.
+    Full pipeline to convert videos, create fingerprints, and detect ads.
+
+    Args:
+        channel (str): The channel name (e.g., 'NDTVIndia').
+        date (str): The date string (e.g., '20251205').
+        time_sel (list or None): A list of specific file names to process 
+                                 (e.g., ["1200.mpd.mp4"]), or None to process all files 
+                                 in the date folder.
+        base_path (str): The root path to the video recordings.
+        ads_language (str): The language tag for ad samples (e.g., 'Hindi').
+        num_workers (int or None): The number of workers for parallel processing 
+                                   during detection (overrides auto-detection).
+
+    Returns:
+        list: A list of dictionaries, where each dictionary represents a detected ad segment.
     """
-    # if num_workers is None:
-    #     num_workers = multiprocessing.cpu_count()
-
-
     if num_workers is None:
         total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
         if total_ram_gb < 8:
@@ -25,213 +38,128 @@ def run_full_pipeline(channel, date, time_sel, base_path, ads_language="Hindi", 
         elif total_ram_gb < 16:
             num_workers = 2
         else:
-            num_workers = min(4, multiprocessing.cpu_count())
+            # Set a reasonable default limit based on available resources
+            num_workers = min(5, multiprocessing.cpu_count())
 
-
-    print("\n=== Starting full pipeline ===")
+    print(f"\n=== Starting full pipeline for {channel}/{date} ===")
     final_path = os.path.join(base_path, channel)
     
-    # Step 1: Conversion (Keep sequential)
-    t0 = time.time()
-    convert_ads_and_videos(final_path, date, time_sel, ads_language="Hindi")
-    print(f"[TIMER] Convert time: {time.time() - t0:.2f} sec")
+    # --- Step 1: Conversion (Now respects the time_sel list) ---
 
-    # Step 2: Fingerprint DB (Keep sequential)
+    t0 = time.time()
+    # time_sel is passed to convert_ads_and_videos to filter which files get converted.
+    convert_ads_and_videos(final_path, date, time_sel, ads_language=ads_language)
+    print(f"[{channel}/{date}][TIMER] Convert time: {time.time() - t0:.2f} sec")
+
+    # --- Step 2: Fingerprint DB (Build/Update DB for AD samples) ---
+
     t1 = time.time()
     run_flow()
-    print(f"[TIMER] Fingerprint time: {time.time() - t1:.2f} sec")
+    print(f"[{channel}/{date}][TIMER] Fingerprint time: {time.time() - t1:.2f} sec")
 
-    # Step 3: Detection (Parallelized)
+    # --- Step 3: Detection (Scan the converted audio files) ---
     t2 = time.time()
     detected_segments = detect_ads(
         language=ads_language, 
         channel=channel, 
         date=date, 
-        time_sel=time_sel,
-        # num_workers=num_workers # Pass the worker count
+        time_sel=time_sel, # Pass the list of files to filter the audio folder
+        num_workers=num_workers # Pass the worker count for parallel detection
     )
-    print(f"[TIMER] Detect time: {time.time() - t2:.2f} sec")
+    print(f"[{channel}/{date}][TIMER] Detect time: {time.time() - t2:.2f} sec")
 
-    print(f"[TOTAL] Pipeline completed in {time.time() - t0:.2f} sec\n")
+    print(f"[{channel}/{date}][TOTAL] Pipeline completed in {time.time() - t0:.2f} sec\n")
     
-    return detected_segments 
+    return detected_segments
 
 
-def run_all_tasks_and_save_csv(tasks_to_run, output_csv_path="Outputs/ALL_DETECTED_ADS.csv", num_workers=None): # ADD num_workers
+def run_task_wrapper(task, num_workers):
+    """Wrapper function to execute run_full_pipeline for concurrent execution."""
+    
+    print(f"==================================================")
+    print(f"   STARTING TASK: {task['channel']} / {task['date']}")
+    print(f"==================================================")
+
+    # Call the pipeline and collect the results
+    task_results = run_full_pipeline(
+        channel=task['channel'],
+        date=task['date'],
+        time_sel=task['time_sel'],
+        base_path=task['base_path'],
+        ads_language=task['ads_language'],
+        num_workers=num_workers 
+    )
+    return task_results
+
+
+def run_all_tasks_and_save_json(tasks_to_run, output_json_path="Outputs/ALL_DETECTED_ADS.json", num_workers=None):
     """
-    Runs all defined tasks and saves the aggregated results to a single CSV.
+    Runs all defined tasks in parallel using ThreadPoolExecutor and saves 
+    the aggregated results to a single JSON file.
     """
-    # ... (unchanged code) ...
+    
+    # Logic to determine workers (You can keep your hardcoded 5 if preferred)
+    max_workers = 5
+    if num_workers is not None:
+        max_workers = num_workers
+    
+    print("\n" + "#"*70)
+    print(f"🚀 Running {len(tasks_to_run)} tasks in parallel with {max_workers} threads.")
+    print("#"*70)
     
     ALL_RESULTS = []
-    
-    for i, task in enumerate(tasks_to_run):
-        print(f"==================================================")
-        print(f"    STARTING TASK {i+1}/{len(tasks_to_run)}: {task['channel']} / {task['date']}")
-        print(f"==================================================")
 
-        # Call the pipeline and collect the results
-        task_results = run_full_pipeline(
-            channel=task['channel'],
-            date=task['date'],
-            time_sel=task['time_sel'],
-            base_path=task['base_path'],
-            ads_language=task['ads_language'],
-            num_workers=num_workers # Pass the worker count
-        )
-        ALL_RESULTS.extend(task_results) # Add results to the master list
+    # Use ThreadPoolExecutor for concurrent execution of all tasks
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks to the executor
+        future_to_task = {
+            executor.submit(run_task_wrapper, task, num_workers): task 
+            for task in tasks_to_run
+        }
+        
+        # Iterate over completed futures to collect results
+        for future in concurrent.futures.as_completed(future_to_task):
+            task = future_to_task[future]
+            try:
+                task_results = future.result()
+                ALL_RESULTS.extend(task_results) # Add results to the master list
+                print(f"✅ COMPLETED: {task['channel']} / {task['date']} - {len(task_results)} segments detected.")
+            except Exception as exc:
+                print(f"❌ FAILED TASK: {task['channel']} / {task['date']} generated an exception: {exc}")
 
-    # ... (unchanged code for final aggregation and saving) ...
-    # ... (Make sure to handle the `df` DataFrame creation and saving logic) ...
+    # --- Final Aggregation and Saving ---
     
     if ALL_RESULTS:
         df = pd.DataFrame(ALL_RESULTS)
+        
         # Re-sort and re-index for the final Segment No
+        # (Ensures the JSON list is ordered chronologically)
         df.sort_values(by=["Channel", "Date", "Time", "Start Time"], inplace=True)
         df.reset_index(drop=True, inplace=True)
         df["Segment No"] = df.index + 1
         
         # Ensure the Outputs directory exists
-        os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
-        df.to_csv(output_csv_path, index=False)
+        os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
+        
+        # === SAVE AS JSON ===
+        # orient='records' creates: [{"col": "val"}, {"col": "val"}]
+        # indent=4 makes it human-readable
+        df.to_json(output_json_path, orient='records', indent=4)
         
         print("\n" + "="*70)
         print(f"🏆 SUCCESS: Aggregated results for {len(ALL_RESULTS)} segments saved to:")
-        print(f"    {output_csv_path}")
+        print(f" {output_json_path}")
         print("="*70)
         
-        # Optional: Print the first few results
-        print("\nHead of Final Results:\n", df.head().to_string(index=False))
+        # Return the data as a list of dicts for the API
+        return df.to_dict(orient='records')
 
     else:
         print("\n[INFO] No ad segments were detected across all tasks.")
-
-
-if __name__ == "__main__":
-    BASE_PATH = "/run/user/1000/gvfs/smb-share:server=media-system-product-name.local,share=mps/disk1/disk1-recordings"
-    ADS_LANGUAGE = "Hindi"
-    
-    # Define the number of workers to use (e.g., 4, or None for max cores)
-    N_WORKERS = 6
-    
-    # 1. Define channels and base path
-    CHANNELS = ["NdtvIndiaBackup"]
-    
-    tasks_to_run = []
-    
-    # --- START MODIFICATION ---
-    TARGET_DATE = "20251117"  # <--- New variable for the specific date
-    
-    for channel in CHANNELS:
-        channel_full_path = os.path.join(BASE_PATH, channel)
         
-        if not os.path.exists(channel_full_path):
-            print(f"[WARNING] Channel folder not found: {channel_full_path}. Skipping.")
-            continue
+        # Create an empty JSON file so the path exists
+        os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
+        with open(output_json_path, 'w') as f:
+            json.dump([], f)
             
-        # Check if the TARGET_DATE folder exists within the channel
-        target_date_path = os.path.join(channel_full_path, TARGET_DATE)
-        # TARGET_TIME = "2200"
-        
-        if os.path.exists(target_date_path) and TARGET_DATE.isdigit() and len(TARGET_DATE) == 8:
-
-            tasks_to_run.append({
-                "channel": channel,
-                "date": TARGET_DATE,
-                "time_sel": None,
-                "base_path": BASE_PATH,
-                "ads_language": ADS_LANGUAGE
-            })
-        else:
-             print(f"[WARNING] Date folder not found for {channel}/{TARGET_DATE}. Skipping.")
-
-    # --- END MODIFICATION ---
-    
-    # 3. Run all tasks and save the final aggregated CSV
-    run_all_tasks_and_save_csv(
-        tasks_to_run,
-        output_csv_path="Outputs/ALL_DETECTED_ADS_AGGREGATED.csv",
-        num_workers=N_WORKERS # Pass the worker count to the runner
-    )
-
-
-# if __name__ == "__main__":
-#     BASE_PATH = "/run/user/1000/gvfs/smb-share:server=192.168.39.4,share=mps/disk1/disk1-recordings"
-#     ADS_LANGUAGE = "Hindi"
-    
-#     # Define the number of workers to use (e.g., 4, or None for max cores)
-#     N_WORKERS = 8
-    
-#     # 1. Define channels and base path
-#     CHANNELS = ["SonyTen1SD"]
-
-#     tasks_to_run = []
-
-#     # ... (unchanged code for discovering channels and dates) ...
-#     for channel in CHANNELS:
-#         channel_full_path = os.path.join(BASE_PATH, channel)
-        
-#         if not os.path.exists(channel_full_path):
-#             print(f"[WARNING] Channel folder not found: {channel_full_path}. Skipping.")
-#             continue
-            
-#         all_items = os.listdir(channel_full_path)
-#         date_folders = sorted([d for d in all_items if d.isdigit() and len(d) == 8])
-        
-#         for date in date_folders:
-#             tasks_to_run.append({
-#                 "channel": channel,
-#                 "date": date,
-#                 "time_sel": None,
-#                 "base_path": BASE_PATH,
-#                 "ads_language": ADS_LANGUAGE
-#             })
-
-#     # 3. Run all tasks and save the final aggregated CSV
-#     run_all_tasks_and_save_csv(
-#         tasks_to_run,
-#         output_csv_path="Outputs/ALL_DETECTED_ADS_AGGREGATED.csv",
-#         num_workers=N_WORKERS # Pass the worker count to the runner
-#     )
-
-
-# if __name__ == "__main__":
-#     BASE_PATH = "/run/user/1000/gvfs/smb-share:server=192.168.39.4,share=mps/disk1/disk1-recordings"
-#     ADS_LANGUAGE = "Hindi"
-    
-#     # Define channels and target date
-#     CHANNELS = ["SonyTen1SD"]
-#     TARGET_DATE = "20250911"  # 👈 Only process this date
-
-#     tasks_to_run = []
-
-#     for channel in CHANNELS:
-#         channel_full_path = os.path.join(BASE_PATH, channel)
-        
-#         if not os.path.exists(channel_full_path):
-#             print(f"[WARNING] Channel folder not found: {channel_full_path}. Skipping.")
-#             continue
-            
-#         all_items = os.listdir(channel_full_path)
-#         date_folders = sorted([d for d in all_items if d.isdigit() and len(d) == 8])
-
-#         # ✅ Only include the target date if it exists
-#         if TARGET_DATE in date_folders:
-#             tasks_to_run.append({
-#                 "channel": channel,
-#                 "date": TARGET_DATE,
-#                 "time_sel": None,  # Process all videos in the date folder
-#                 "base_path": BASE_PATH,
-#                 "ads_language": ADS_LANGUAGE
-#             })
-#         else:
-#             print(f"[INFO] Date folder {TARGET_DATE} not found under {channel_full_path}")
-
-#     # 3. Run all tasks and save the final aggregated CSV
-#     if tasks_to_run:
-#         run_all_tasks_and_save_csv(
-#             tasks_to_run,
-#             output_csv_path=f"Outputs/ALL_DETECTED_ADS_{TARGET_DATE}.csv"
-#         )
-#     else:
-#         print("[INFO] No tasks to run.")
+        return []

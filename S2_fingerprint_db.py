@@ -36,9 +36,12 @@ DB_PATH = "Outputs/DB/ads_fingerprints.db"
 SR_EXPECTED = 16000      # expected sample rate from Step 1
 N_FFT = 2048
 HOP_LENGTH = 512
-AMP_MIN_DB_ADV = -65         # peaks below this (dB rel to max) are ignored
-PEAK_NEIGHBORHOOD_FREQ = 30   # frequency neighborhood size (bins)
-PEAK_NEIGHBORHOOD_TIME = 15   # time neighborhood size (frames)
+AMP_MIN_DB_ADV = -70         # peaks below this (dB rel to max) are ignored
+# AMP_MIN_DB_ADV = -65         # peaks below this (dB rel to max) are ignored
+PEAK_NEIGHBORHOOD_FREQ = 20   # frequency neighborhood size (bins)
+PEAK_NEIGHBORHOOD_TIME = 8   # time neighborhood size (frames)
+# PEAK_NEIGHBORHOOD_FREQ = 30   # frequency neighborhood size (bins)
+# PEAK_NEIGHBORHOOD_TIME = 15   # time neighborhood size (frames)
 
 # Landmark pairing params
 FAN_VALUE = 20           # how many neighbor peaks to pair with (Shazam uses small fan)
@@ -51,7 +54,7 @@ def init_db(db_path):
     """
     Create tables and ensure required columns exist (including 'language').
     """
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     cur = conn.cursor()
 
     # create tables if not exist
@@ -87,7 +90,6 @@ def init_db(db_path):
 
     conn.commit()
     conn.close()
-
 
 
 def compute_adv_peaks(y, sr,
@@ -178,17 +180,51 @@ def compute_content_hash_from_samples(y):
     b = int16.tobytes()
     return hashlib.md5(b).hexdigest()
 
-def run_flow():
+def run_flow(ads_language=None, specific_ads=None):
+    """
+    ads_language: folder name inside ADS_AUDIO_FOLDER (e.g. "Hindi")
+    target_ads: list of specific filenames (e.g. ["ad1.mp4", "ad2.mp4"]) or None
+    """
     init_db(DB_PATH)
 
-    # recursively collect .wav files
-    files = []
-    for root, _, filenames in os.walk(ADS_AUDIO_FOLDER):
+    # 1. Determine which specific language folder to look into
+    search_path = ADS_AUDIO_FOLDER
+    if ads_language:
+        search_path = os.path.join(ADS_AUDIO_FOLDER, ads_language)
+
+    if not os.path.exists(search_path):
+        print(f"[ERROR] Path does not exist: {search_path}")
+        return
+
+    # 2. Recursively collect .wav files
+    all_files = []
+    for root, _, filenames in os.walk(search_path):
         for f in filenames:
             if f.lower().endswith(".wav"):
-                files.append(os.path.join(root, f))
+                all_files.append(os.path.join(root, f))
 
-    print(f"Found {len(files)} audio files in ads folder.")
+    # 3. Filter for target_ads if provided
+    if specific_ads:
+        # Normalize target_ads (handle strings vs lists and remove extensions)
+        if isinstance(specific_ads, str):
+            specific_ads = [specific_ads]
+            
+        target_names = [os.path.splitext(os.path.basename(a))[0] for a in specific_ads]
+        
+        # Only keep files whose basename matches a name in target_names
+        files_to_process = [
+            f for f in all_files 
+            if os.path.splitext(os.path.basename(f))[0] in target_names
+        ]
+        
+        if not files_to_process:
+            print(f"[WARN] No matching .wav files found for targets: {specific_ads}")
+            print(f"Looked in: {search_path}")
+            return
+    else:
+        files_to_process = all_files
+
+    print(f"Processing {len(files_to_process)} audio files.")
 
     total_hashes = 0
     start_time = time.time()
@@ -196,23 +232,28 @@ def run_flow():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    for path in tqdm(files, desc="Processing ads"):
+    for path in tqdm(files_to_process, desc="Fingerprinting Ads"):
         fname = os.path.basename(path)
         ad_id = os.path.splitext(fname)[0]
-        language = os.path.basename(os.path.dirname(path))  # folder name
+        # Get language from the immediate parent folder name
+        language = os.path.basename(os.path.dirname(path))
 
         try:
+            # Note: process_file uses the PEAK_NEIGH_TIME defined above
             hashes, duration, y_resampled = process_file(path)
             content_hash = compute_content_hash_from_samples(y_resampled)
         except Exception as e:
             print(f"\nError processing {path}: {e}")
             continue
 
+        # Check for duplicates using content hash
         cur.execute("SELECT ad_id, filename FROM files WHERE content_hash=?", (content_hash,))
         found = cur.fetchone()
         if found:
             existing_ad_id, existing_fn = found
-            print(f"Skipping {fname} — already in DB as '{existing_fn}' (ad_id={existing_ad_id})")
+            # If specifically targeting, we might want to re-process, 
+            # but usually skipping is safer for DB integrity.
+            print(f"Skipping {fname} — already in DB as '{existing_fn}'")
             continue
 
         add_hashes_to_db(DB_PATH, ad_id, fname, duration, hashes, content_hash=content_hash, language=language)
@@ -221,6 +262,4 @@ def run_flow():
     conn.close()
     elapsed = time.time() - start_time
     print(f"\nDone. Total hashes stored: ~{total_hashes}. Time elapsed: {elapsed:.1f}s")
-    print(f"DB saved to: {DB_PATH}")
-
 

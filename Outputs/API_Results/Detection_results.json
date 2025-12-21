@@ -1,17 +1,44 @@
 [
     {
         "Segment No":1,
-        "Channel":"NDTVIndia",
-        "Date":"20251206",
-        "Time":"10",
+        "Channel":"HotStarHindi",
+        "Date":"20250406",
+        "Time":"21",
         "Label":"Ad",
-        "Ad Name":"saloni oil VO",
+        "Ad Name":"K\u00fchl BLDC Fans_ Saves Electricity",
         "Language":"Hindi",
-        "Start Time":"10:25:03 AM",
-        "End Time":"10:25:23 AM",
-        "Duration(s)":19.969,
-        "Avg_Score":1.0,
+        "Start Time":"09:21:45 PM",
+        "End Time":"09:21:56 PM",
+        "Duration(s)":10.379,
         "Type":"Full",
-        "SourceFile":"1000.mpd.wav"
+        "SourceFile":"2100.mpd.wav"
+    },
+    {
+        "Segment No":2,
+        "Channel":"HotStarHindi",
+        "Date":"20250406",
+        "Time":"21",
+        "Label":"Ad",
+        "Ad Name":"K\u00fchl BLDC Fans_ Enhance Home D\u00e9cor",
+        "Language":"Hindi",
+        "Start Time":"09:22:35 PM",
+        "End Time":"09:22:45 PM",
+        "Duration(s)":10.333,
+        "Type":"Full",
+        "SourceFile":"2100.mpd.wav"
+    },
+    {
+        "Segment No":3,
+        "Channel":"HotStarHindi",
+        "Date":"20250406",
+        "Time":"21",
+        "Label":"Ad",
+        "Ad Name":"Rajshree - 10 seconds",
+        "Language":"Hindi",
+        "Start Time":"09:59:37 PM",
+        "End Time":"09:59:47 PM",
+        "Duration(s)":10.048,
+        "Type":"Full",
+        "SourceFile":"2100.mpd.wav"
     }
 ]

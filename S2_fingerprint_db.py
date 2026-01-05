@@ -1,24 +1,3 @@
-#!/usr/bin/env python3
-"""
-build_landmarks_db.py
-
-- Reads WAV files from ADS_AUDIO_FOLDER (assumes standardized audio from Step 1:
-  mono, 16000 Hz, PCM s16, loudnorm)
-- Extracts spectrogram peaks (local maxima)
-- Forms landmark pairs (f1,t1) -> (f2,t2) within a target zone (fan)
-- Hashes each landmark pair and stores (hash, ad_id, time_offset) in SQLite DB
-
-Duplication removal:
-- Compute a content-hash (MD5) of the audio samples (resampled to SR_EXPECTED)
-  and store it in the files table. If a file with same content_hash already
-  exists in DB, the file is skipped (no duplicate fingerprints).
-
-Dependencies:
-    pip install numpy scipy librosa soundfile tqdm
-
-Usage:
-    python build_landmarks_db.py
-"""
 import os
 import sqlite3
 import hashlib
@@ -36,18 +15,15 @@ DB_PATH = "Outputs/DB/ads_fingerprints.db"
 SR_EXPECTED = 16000      # expected sample rate from Step 1
 N_FFT = 2048
 HOP_LENGTH = 512
-AMP_MIN_DB_ADV = -70         # peaks below this (dB rel to max) are ignored
-# AMP_MIN_DB_ADV = -65         # peaks below this (dB rel to max) are ignored
+AMP_MIN_DB_ADV = -75        # peaks below this (dB rel to max) are ignored
 PEAK_NEIGHBORHOOD_FREQ = 20   # frequency neighborhood size (bins)
-PEAK_NEIGHBORHOOD_TIME = 8   # time neighborhood size (frames)
-# PEAK_NEIGHBORHOOD_FREQ = 30   # frequency neighborhood size (bins)
-# PEAK_NEIGHBORHOOD_TIME = 15   # time neighborhood size (frames)
+PEAK_NEIGHBORHOOD_TIME = 10   # time neighborhood size (frames)
 
 # Landmark pairing params
-FAN_VALUE = 20           # how many neighbor peaks to pair with (Shazam uses small fan)
+FAN_VALUE = 20          # how many neighbor peaks to pair with (Shazam uses small fan)
 MAX_TIME_DELTA = 300     # max frames between peak pairs (in frames)
 HASH_TRUNCATE = 20       # characters of sha1 hex to store (reduces DB size)
-BATCH_INSERT_SIZE = 5000
+BATCH_INSERT_SIZE = 4000
 # ------------------------------------------
 
 def init_db(db_path):

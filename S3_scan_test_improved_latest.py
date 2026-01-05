@@ -1,14 +1,3 @@
-"""
-scan_and_detect_offset_end_clamp.py (Enhanced Version)
------------------------------------------------------
-Adds:
- - Specific ad filtering logic
- - Channel, Date, Time (from filename)
- - Ad Name
- - Language (from ADS_AUDIO_FOLDER)
-in CSV output.
-"""
-
 import os
 import sqlite3
 import hashlib
@@ -33,38 +22,43 @@ HOP_LENGTH = 512
 # AMP_MIN_DB = -65
 # PEAK_NEIGH_FREQ = 30
 # PEAK_NEIGH_TIME = 15
-AMP_MIN_DB = -70
+AMP_MIN_DB = -65
 PEAK_NEIGH_FREQ = 20
-PEAK_NEIGH_TIME = 8
+PEAK_NEIGH_TIME = 10
 
 FAN_VALUE = 20
-MAX_TIME_DELTA = 300
+MAX_TIME_DELTA = 200
 HASH_TRUNCATE = 20
-DELTA_BIN_SIZE = 0.2
-MIN_DETECTION_SEC = 2.0
-MIN_CONFIDENCE = 0.2
+DELTA_BIN_SIZE = 0.02
+MIN_DETECTION_SEC = 0.8
+MIN_CONFIDENCE = 0.7
 MERGE_GAP = 3.0
 
+# LOCAL_MARGIN = 2.0
 LOCAL_MARGIN = 2.0
-# CORR_THRESHOLD = 0.4
-CORR_THRESHOLD = 0.3
+CORR_THRESHOLD = 0.5
+# CORR_THRESHOLD = 0.3
 
-FULL_MATCH_RATIO = 0.85
-# FULL_MATCH_RATIO = 0.93
+# FULL_MATCH_RATIO = 0.85
+FULL_MATCH_RATIO = 0.90
 
-BULK_SQL_IN_CHUNK = 4000
+BULK_SQL_IN_CHUNK = 5000
+
 
 
 # === HELPERS ===
 
-def hhmmss_12hr(sec_f, custom_hour):
-    s = int(round(sec_f))
-    m = (s % 3600) // 60
-    s = s % 60
+def hhmmss_12hr(total_sec, custom_hour):
+    """Simple HH:MM:SS AM/PM converter"""
+    total_sec = int(total_sec)
+    m = (total_sec % 3600) // 60
+    s = total_sec % 60
+    
     h = int(custom_hour)
     suffix = "AM" if h < 12 else "PM"
     h_12 = h % 12
     if h_12 == 0: h_12 = 12
+    
     return f"{h_12:02d}:{m:02d}:{s:02d} {suffix}"
 
 
@@ -82,32 +76,6 @@ def extract_channel_date(mixed_folder):
         date = "Unknown"
     return channel, date
 
-
-# def load_fp_index(db_path, language_filter=None):
-#     conn = sqlite3.connect(db_path)
-#     cur = conn.cursor()
-
-#     print("Loading fingerprint index...")
-
-#     if language_filter:
-#         cur.execute("SELECT hash, ad_id, time_offset, language FROM fingerprints WHERE language=?", (language_filter,))
-#     else:
-#         cur.execute("SELECT hash, ad_id, time_offset, language FROM fingerprints")
-
-#     idx = defaultdict(list)
-#     for h, ad_id, t_ad, lang in cur:
-#         idx[h].append((ad_id, t_ad))
-
-#     if language_filter:
-#         cur.execute("SELECT ad_id, duration FROM files WHERE language=?", (language_filter,))
-#     else:
-#         cur.execute("SELECT ad_id, duration FROM files")
-
-#     ad_durs = {ad_id: dur for ad_id, dur in cur.fetchall()}
-#     conn.close()
-
-#     print(f"Loaded {len(idx)} unique hashes, {len(ad_durs)} ads for language: {language_filter or 'ALL'}")
-#     return idx, ad_durs
 
 def load_fp_index(db_path, language_filter=None, specific_ads=None):
     """
@@ -214,56 +182,70 @@ def local_refine_start(mixed_y, ad_y, sr, coarse_s, coarse_e, margin=LOCAL_MARGI
     shift = peak_idx / float(sr)
     return start0 + shift
 
+def local_refine_end(mixed_y, ad_y, sr, coarse_s, coarse_e, margin=LOCAL_MARGIN, canonical_dur=None):
+    """
+    Refines the end boundary of a detection using cross-correlation.
+    If canonical_dur is provided, it extends the search window to verify 
+    if the ad played to its full length.
+    """
+    # 1. Determine the search window. 
+    # If we know the ad's expected length, look around that expected end point.
+    if canonical_dur is not None:
+        # The expected end is 'start + full length'
+        expected_end = coarse_s + canonical_dur
+        # Search from slightly before the coarse end to slightly after the expected end
+        start0 = max(0.0, coarse_e - margin)
+        end0 = min(len(mixed_y)/sr, expected_end + margin)
+    else:
+        # Standard search window around the coarse (fingerprint-based) end
+        start0 = max(0.0, coarse_e - margin)
+        end0 = min(len(mixed_y)/sr, coarse_e + margin)
 
-def local_refine_end(mixed_y, ad_y, sr, coarse_s, coarse_e, margin=LOCAL_MARGIN):
-    start0 = max(0.0, coarse_e - margin - min(len(ad_y)/sr, margin))
-    end0 = min(len(mixed_y)/sr, coarse_e + margin)
     i0 = int(start0 * sr)
     i1 = int(end0 * sr)
     seg = mixed_y[i0:i1]
+
     if len(seg) < 1 or len(ad_y) < 1:
         return coarse_e
+
+    # 2. Use the "tail" of the ad sample for correlation (e.g., last 3 seconds or margin * 1.5)
     suffix_len = min(len(ad_y), int(margin * sr * 1.5))
     ad_suf = ad_y[-suffix_len:]
+
+    # 3. Perform cross-correlation to find the best alignment
     corr = fftconvolve(seg, ad_suf[::-1], mode="valid")
+    
+    # Normalize the correlation to get a value between 0 and 1
     norm_seg = np.linalg.norm(seg) + 1e-10
     norm_suf = np.linalg.norm(ad_suf) + 1e-10
     corr = corr / (norm_seg * norm_suf)
+
     peak_idx = np.argmax(corr)
     peak_val = corr[peak_idx]
+
+    # 4. Evidence-based return: Only update if we find a strong match
+    # If peak_val is low, it means the ad likely didn't play through that section.
     if peak_val < CORR_THRESHOLD:
         return coarse_e
+
+    # Calculate the timestamp of the best match
     shift = peak_idx / float(sr)
-    return start0 + shift
+    refined_e = start0 + shift + (suffix_len / float(sr))
+    
+    return refined_e
 
-
-# def refine_boundaries(mixed_y, ad_y, sr, coarse_s, coarse_e, t_max_mix, canonical_dur=None):
-#     s2 = local_refine_start(mixed_y, ad_y, sr, coarse_s, coarse_e)
-#     expected_span = coarse_e - coarse_s
-#     tentative_e = s2 + expected_span
-#     e2 = local_refine_end(mixed_y, ad_y, sr, s2, tentative_e)
-#     if canonical_dur is not None:
-#         if abs((e2 - s2) - canonical_dur) < (canonical_dur * 0.25):
-#             e2 = s2 + canonical_dur
-#     hop_time = HOP_LENGTH / SR_EXPECTED
-#     max_bound = t_max_mix + hop_time + LOCAL_MARGIN
-#     if e2 > max_bound and e2 > coarse_e:
-#         e2 = max(max_bound, coarse_e)
-#     if e2 <= s2:
-#         return coarse_s, coarse_e
-#     return s2, e2
 
 def refine_boundaries(mixed_y, ad_y, sr, coarse_s, coarse_e, t_max_mix, canonical_dur=None):
-    # Increase search margin for the start
-    s2 = local_refine_start(mixed_y, ad_y, sr, coarse_s, coarse_e, margin=3.0) 
+    # First, find the best start point
+    s2 = local_refine_start(mixed_y, ad_y, sr, coarse_s, coarse_e)
     
-    # If we know the exact duration, use it to anchor the end point after finding a solid start
-    if canonical_dur is not None:
-        e2 = s2 + canonical_dur
-    else:
-        # Fallback to standard refinement if duration is unknown
-        e2 = local_refine_end(mixed_y, ad_y, sr, s2, coarse_e, margin=3.0)
+    # Then, find the best end point using the dynamic search range
+    e2 = local_refine_end(mixed_y, ad_y, sr, s2, coarse_e, canonical_dur=canonical_dur)
     
+    # Safety check: ensure end is after start
+    if e2 <= s2:
+        return s2, coarse_e
+        
     return s2, e2
 
 
@@ -278,7 +260,6 @@ def detect_for_file(mixed_path, fp_index, ad_durations, ad_min_hash_time):
     peaks = compute_peaks(y, sr0)
     hashes = generate_hashes(peaks, hop_length=HOP_LENGTH, sr=sr0)
     if not hashes:
-        print("No hashes generated.")
         return []
 
     hash_to_t = defaultdict(list)
@@ -287,8 +268,7 @@ def detect_for_file(mixed_path, fp_index, ad_durations, ad_min_hash_time):
 
     ad_delta_acc = defaultdict(lambda: defaultdict(list))
     for h, t_list in hash_to_t.items():
-        if h not in fp_index:
-            continue
+        if h not in fp_index: continue
         for (ad_id, t_ad) in fp_index[h]:
             for t_mix in t_list:
                 delta = t_mix - t_ad
@@ -299,258 +279,92 @@ def detect_for_file(mixed_path, fp_index, ad_durations, ad_min_hash_time):
     hop_time = HOP_LENGTH / SR_EXPECTED
     for ad_id, dmap in ad_delta_acc.items():
         for bin_key, matches in dmap.items():
-            if not matches:
-                continue
+            if not matches: continue
             t_mix_vals = [m[0] for m in matches]
             t_ad_vals = [m[1] for m in matches]
-            t_min = min(t_mix_vals)
-            t_max = max(t_mix_vals)
+            t_min, t_max = min(t_mix_vals), max(t_mix_vals)
             dur_est = max(t_max - t_min, hop_time)
-            matched = len(t_mix_vals)
-            expected_slots = max(1.0, dur_est / hop_time)
-            score = min(1.0, matched / expected_slots)
+            score = min(1.0, len(t_mix_vals) / max(1.0, dur_est / hop_time))
+            
             if dur_est >= MIN_DETECTION_SEC and score >= MIN_CONFIDENCE:
                 idx0 = t_mix_vals.index(t_min)
-                t_mix_ear = t_mix_vals[idx0]
                 t_ad_min = ad_min_hash_time.get(ad_id, t_ad_vals[idx0])
-                coarse_s = t_mix_ear - t_ad_min
+                coarse_s = t_min - t_ad_min
                 coarse_e = t_max + hop_time
-                canon = ad_durations.get(ad_id)
-                if canon is not None:
-                    if (t_max - t_min) >= (0.9 * canon):
-                        coarse_e = min(coarse_s + canon, coarse_e)
+                
                 detections.append({
-                    "ad_id": ad_id,
-                    "coarse_s": coarse_s,
-                    "coarse_e": coarse_e,
-                    "t_max_mix": t_max,
-                    "dur_est": dur_est,
-                    "score": score
+                    "ad_id": ad_id, "coarse_s": coarse_s, "coarse_e": coarse_e,
+                    "t_max_mix": t_max, "dur_est": dur_est, "score": score
                 })
 
     detections.sort(key=lambda x: (x["ad_id"], x["coarse_s"]))
     merged = []
     for det in detections:
-        if not merged:
-            merged.append(det)
+        if not merged: merged.append(det)
         else:
             last = merged[-1]
             if det["ad_id"] == last["ad_id"] and det["coarse_s"] <= last["coarse_e"] + MERGE_GAP:
-                new_s = min(last["coarse_s"], det["coarse_s"])
-                new_e = max(last["coarse_e"], det["coarse_e"])
-                new_score = max(last["score"], det["score"])
-                new_tmax = max(last.get("t_max_mix", 0.0), det.get("t_max_mix", 0.0))
-                merged[-1] = {
-                    "ad_id": last["ad_id"],
-                    "coarse_s": new_s,
-                    "coarse_e": new_e,
-                    "t_max_mix": new_tmax,
-                    "dur_est": new_e - new_s,
-                    "score": new_score
-                }
-            else:
-                merged.append(det)
+                last["coarse_e"] = max(last["coarse_e"], det["coarse_e"])
+                last["t_max_mix"] = max(last["t_max_mix"], det["t_max_mix"])
+                last["score"] = max(last["score"], det["score"])
+                last["dur_est"] = last["coarse_e"] - last["coarse_s"]
+            else: merged.append(det)
 
     final = []
-    y_full = y
     for det in merged:
         ad_id = det["ad_id"]
-        cs, ce = det["coarse_s"], det["coarse_e"]
-        tmax_mix = det.get("t_max_mix", ce)
         ad_path = os.path.join(ADS_AUDIO_FOLDER, f"{ad_id}.wav")
-        if os.path.exists(ad_path):
-            ad_y, _ = librosa.load(ad_path, sr=SR_EXPECTED, mono=True)
-        else:
-            ad_y = None
-
-        if ad_y is not None:
-            refined_s, refined_e = refine_boundaries(y_full, ad_y, sr0, cs, ce, tmax_mix, canonical_dur=ad_durations.get(ad_id))
-        else:
-            refined_s, refined_e = cs, ce
-
-        dur = max(0.0, refined_e - refined_s)
-        typ = "Partial"
+        ad_y = librosa.load(ad_path, sr=SR_EXPECTED, mono=True)[0] if os.path.exists(ad_path) else None
         ad_dur = ad_durations.get(ad_id)
-        if ad_dur is not None and dur >= FULL_MATCH_RATIO * ad_dur:
+
+        # Refine boundaries with Cross-Correlation
+        if ad_y is not None:
+            refined_s, refined_e = refine_boundaries(y, ad_y, sr0, det["coarse_s"], det["coarse_e"], det["t_max_mix"], canonical_dur=ad_dur)
+        else:
+            refined_s, refined_e = det["coarse_s"], det["coarse_e"]
+
+        # STRICT DURATION & TYPE CHECK
+        actual_dur = refined_e - refined_s
+        
+        # Logic: If it's a 20s ad but we only detected 6s, it CANNOT be "Full"
+        # We require it to be within 0.8s of the reference length to be "Full"
+        if ad_dur is not None and abs(actual_dur - ad_dur) < 0.8 and det["score"] > 0.8:
             typ = "Full"
-            refined_e = refined_s + ad_dur
-            dur = ad_dur
+            final_dur = ad_dur
+            final_e = refined_s + ad_dur
+        else:
+            typ = "Partial"
+            final_dur = actual_dur
+            final_e = refined_e
 
         final.append({
-            "ad_id": ad_id,
-            "start": refined_s,
-            "end": refined_e,
-            "duration": dur,
-            "score": round(det["score"], 3),
-            "type": typ
+            "ad_id": ad_id, "start": refined_s, "end": final_e,
+            "duration": final_dur, "score": round(det["score"], 3), "type": typ
         })
 
+    # Overlap removal
     final = sorted(final, key=lambda x: x["start"])
     out = []
     for d in final:
-        if not out:
-            out.append(d)
+        if not out: out.append(d)
         else:
-            last = out[-1]
-            if d["start"] <= last["end"]:
-                if d["score"] > last["score"]:
-                    out[-1] = d
-                elif d["score"] == last["score"] and d["duration"] > last["duration"]:
-                    out[-1] = d
-            else:
-                out.append(d)
+            if d["start"] <= out[-1]["end"]:
+                if d["score"] > out[-1]["score"]: out[-1] = d
+            else: out.append(d)
     return out
         
-
-# def _detect_worker(args):
-#     """Worker function for multiprocessing pool."""
-#     mixed_path, fp_index, ad_durations, ad_min_hash_time = args
-#     # detect_for_file handles the core logic
-#     return detect_for_file(mixed_path, fp_index, ad_durations, ad_min_hash_time)
-
-
-# def detect_ads(language=None, channel=None, date=None, time_sel=None, num_workers=None): # ADD num_workers
-#     """
-#     Detect ads in converted mixed audio using the fingerprint DB.
-#     Uses multiprocessing to speed up file scanning.
-
-#     Args:
-#         language (str): Language tag for ad samples.
-#         channel (str): Channel name.
-#         date (str): Date string.
-#         time_sel (str or list or None): A single filename string (e.g., '1200.mpd.mp4'),
-#                                         a list of filename strings, or None to process all files.
-#         num_workers (int or None): The number of worker processes to use.
-    
-#     Returns:
-#         list: A list of dictionaries representing detected ad segments.
-#     """
-#     global ADS_AUDIO_FOLDER
-
-#     MIXED_AUDIO_FOLDER = f"Outputs/video_to_audio/{channel}/{date}"
-#     ADS_AUDIO_FOLDER   = f"Outputs/ads_fingerprints/{language}"
-
-#     print(f"\n[INFO] Detecting ads for channel={channel}, date={date}, time_sel={time_sel}, language={language}")
-#     print(f"[INFO] Using mixed audio folder: {MIXED_AUDIO_FOLDER}")
-
-#     # Assuming load_fp_index, DB_PATH, compute_ad_min_hash_time, _detect_worker, 
-#     # and hhmmss_12hr are defined elsewhere and accessible.
-#     fp_index, ad_durations = load_fp_index(DB_PATH, language_filter=language)
-#     ad_min_hash_time = compute_ad_min_hash_time(fp_index)
-
-#     all_rows = []
-    
-#     # --- File Discovery and Filtering ---
-    
-#     # Get all .wav files in the mixed audio folder
-#     all_files = [
-#         f for f in os.listdir(MIXED_AUDIO_FOLDER)
-#         if f.lower().endswith(".wav")
-#     ]
-
-#     files_to_process = all_files
-
-#     if time_sel is not None:
-#         # Normalize time_sel to a list if it's a single string
-#         if isinstance(time_sel, str):
-#             target_files = [time_sel]
-#         elif isinstance(time_sel, list):
-#             target_files = time_sel
-#         else:
-#             print(f"[WARNING] Invalid type for time_sel: {type(time_sel)}. Processing all files.")
-#             target_files = [] # This will effectively stop the filtering below
-
-#         if target_files:
-#             # Create a set of base names (e.g., '1200.mpd.mp4' -> '1200') for efficient lookup
-#             # We strip the extension and any ".mpd" tag to match the format used in 'files'
-#             target_basenames = {
-#                 os.path.splitext(f)[0].replace(".mpd", "") for f in target_files
-#             }
-            
-#             # Filter the list of all .wav files
-#             files_to_process = [
-#                 f for f in all_files 
-#                 if os.path.splitext(f)[0].replace(".mpd", "") in target_basenames
-#             ]
-
-#     if not files_to_process:
-#         print(f"[INFO] No matching audio files found for {channel} {date} {time_sel}")
-#         return []
-
-#     # Rename variable for clarity
-#     files = files_to_process 
-
-#     # --- Setup Parallel Processing ---
-#     if num_workers is None:
-#         num_workers = multiprocessing.cpu_count()
-        
-#     print(f"[INFO] Using {num_workers} worker processes for detection on {len(files)} files.")
-    
-#     # Prepare arguments for the worker function
-#     all_args = []
-#     for fname in files:
-#         mixed_path = os.path.join(MIXED_AUDIO_FOLDER, fname)
-#         # Note: fp_index, ad_durations, ad_min_hash_time are shared across processes
-#         all_args.append((mixed_path, fp_index, ad_durations, ad_min_hash_time))
-
-    
-#     # Execute detection in parallel
-#     results = []
-#     with multiprocessing.Pool(processes=num_workers) as pool:
-#         # pool.imap is better for long-running tasks as it returns results as soon as they are ready
-#         # tqdm is used to wrap the pool results for progress tracking
-#         for dets in tqdm(pool.imap(_detect_worker, all_args), total=len(all_args), desc="Mixed files (Parallel)"):
-#             results.append(dets)
-            
-#     # --- Aggregate Results ---
-#     seg_no = 1
-#     for i, dets in enumerate(results):
-#         fname = files[i]  # Get the original filename
-        
-#         # Ensure the filename is used to extract the hour (e.g., '12' from '1200.mpd.wav')
-#         # This handles cases like '1200.mpd.wav' or just '1200.wav'
-#         # Split by '.', take the first part, and take the first two characters.
-#         initial_digits = os.path.splitext(fname)[0][:2] 
-        
-#         for d in dets:
-#             all_rows.append({
-#                 "Segment No": seg_no,
-#                 "Channel": channel,
-#                 "Date": date,
-#                 "Time": initial_digits,
-#                 "Label": "Ad",
-#                 "Ad Name": d["ad_id"],
-#                 "Language": language,
-#                 "Start Time": hhmmss_12hr(d["start"], initial_digits),
-#                 "End Time": hhmmss_12hr(d["end"], initial_digits),
-#                 "Duration(s)": round(d["duration"], 3),
-#                 "Avg_Score": d["score"],
-#                 "Type": d["type"],
-#                 "SourceFile": fname
-#             })
-#             seg_no += 1
-
-#     if not all_rows:
-#         print(f"No ads detected for {channel} {date} ({language}).")
-
-#     return all_rows
 
 def _detect_worker(args):
     return detect_for_file(*args)
 
 def detect_ads(language=None, channel=None, date=None, time_sel=None, specific_ads=None, num_workers=None):
-    """
-    Main entry point updated with specific_ads support.
-    """
     global ADS_AUDIO_FOLDER
     MIXED_AUDIO_FOLDER = f"Outputs/video_to_audio/{channel}/{date}"
     ADS_AUDIO_FOLDER = f"Outputs/ads_fingerprints/{language}"
 
-    # Load filtered index
     fp_index, ad_durations = load_fp_index(DB_PATH, language_filter=language, specific_ads=specific_ads)
     ad_min_hash_time = compute_ad_min_hash_time(fp_index)
 
-    # File discovery
     all_files = [f for f in os.listdir(MIXED_AUDIO_FOLDER) if f.lower().endswith(".wav")]
     if time_sel:
         target_basenames = {os.path.splitext(f)[0].replace(".mpd", "") for f in (time_sel if isinstance(time_sel, list) else [time_sel])}
@@ -558,31 +372,46 @@ def detect_ads(language=None, channel=None, date=None, time_sel=None, specific_a
     else:
         files = all_files
 
-    if not files or not fp_index:
-        return []
+    if not files or not fp_index: return []
 
-    # Parallel Execution
     num_workers = num_workers or multiprocessing.cpu_count()
     all_args = [(os.path.join(MIXED_AUDIO_FOLDER, f), fp_index, ad_durations, ad_min_hash_time) for f in files]
     
     results = []
     with multiprocessing.Pool(processes=num_workers) as pool:
-        for dets in tqdm(pool.imap(_detect_worker, all_args), total=len(all_args), desc="Scanning Files"):
+        for dets in tqdm(pool.imap(_detect_worker, all_args), total=len(all_args), desc="Scanning"):
             results.append(dets)
 
-    # Aggregate
     all_rows = []
     seg_no = 1
     for i, dets in enumerate(results):
         initial_digits = os.path.splitext(files[i])[0][:2]
+        
         for d in dets:
+            # 1. Use high-precision floats for the math
+            start_val = d["start"]
+            duration_val = d["duration"]
+            end_val = start_val + duration_val
+            
+            # 2. Format to HH:MM:SS
+            # We round to the nearest second for the display string
+            start_str = hhmmss_12hr(round(start_val), initial_digits)
+            end_str = hhmmss_12hr(round(end_val), initial_digits)
+            
             all_rows.append({
-                "Segment No": seg_no, "Channel": channel, "Date": date, "Time": initial_digits,
-                "Label": "Ad", "Ad Name": d["ad_id"], "Language": language,
-                "Start Time": hhmmss_12hr(d["start"], initial_digits),
-                "End Time": hhmmss_12hr(d["end"], initial_digits),
-                "Duration(s)": round(d["duration"], 3),
-                "Type": d["type"], "SourceFile": files[i]
+                "Segment No": seg_no,
+                "Channel": channel,
+                "Date": date,
+                "Time": initial_digits,
+                "Label": "Ad",
+                "Ad Name": d["ad_id"],
+                "Language": language,
+                "Start Time": start_str,
+                "End Time": end_str,
+                "Duration(s)": round(duration_val, 2),
+                "Type": d["type"],
+                "SourceFile": files[i]
             })
             seg_no += 1
+
     return all_rows

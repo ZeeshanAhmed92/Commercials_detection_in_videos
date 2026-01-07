@@ -113,7 +113,7 @@ def detect_ads():
                             f for f in os.listdir(date_path)
                             if f.lower().endswith((
                                 ".mp4", ".mkv", ".avi",
-                                ".mov", ".mpeg", ".mpd.mp4"
+                                ".mov", ".mpeg", ".mpd.mp4", ".ts"
                             ))
                         ]
 

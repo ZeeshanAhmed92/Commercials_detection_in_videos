@@ -6,6 +6,7 @@ app = Flask(__name__)
 
 # === CONFIG ===
 BASE_PATH = "/run/user/1000/gvfs/smb-share:server=192.168.39.4,share=mps/disk1/disk1-recordings"
+# BASE_PATH = "/run/user/1000/gvfs/smb-share:server=192.168.39.11,share=record"
 ADS_SAMPLES_PATH = "Inputs/ads_samples"
 OUTPUT_DIR = "Outputs/API_Results"
 

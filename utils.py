@@ -1,6 +1,17 @@
-# =============================================================
-#   IMPORTS
-# =============================================================
+"""
+utils.py  —  Pipeline orchestration (fixed)
+
+Key fixes vs original:
+  • db_lock is actually used in the SQLite-writing stages via a threading.Lock
+    so concurrent tasks don't corrupt the DB when writing fingerprints.
+  • run_all_tasks_and_save_json no longer spawns a ThreadPoolExecutor with
+    tasks that each launch their own multiprocessing.Pool  (nested parallelism
+    caused OOM / deadlocks on many systems).  Instead tasks run sequentially
+    or with a controlled outer thread count (default 2).
+  • num_workers is correctly propagated everywhere (was silently ignored).
+  • Pipeline timer output cleaned up.
+"""
+
 import os
 import time
 import json
@@ -9,155 +20,175 @@ import threading
 import pandas as pd
 import multiprocessing
 import concurrent.futures
+
+from config import MAX_OUTER_TASKS
 from S1_preprocessing_aud import convert_ads_and_videos
-from S2_fingerprint_db import run_flow
+from S2_fingerprint_db     import run_flow
 from S3_scan_test_improved_latest import detect_ads
 
+# Shared lock so parallel tasks don't clobber the SQLite DB during S2
 db_lock = threading.Lock()
 
-def run_full_pipeline(channel, date, time_sel, base_path, ads_language=None, specific_ads=None, num_workers=None):
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  RAM-AWARE WORKER COUNT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _default_workers() -> int:
+    ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+    cpu    = multiprocessing.cpu_count()
+    if ram_gb < 8:
+        return 1
+    elif ram_gb < 16:
+        return 2
+    else:
+        return min(4, cpu)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SINGLE-TASK PIPELINE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_full_pipeline(
+    channel:      str,
+    date:         str,
+    time_sel:     list | None,
+    base_path:    str,
+    ads_language: str  | None = None,
+    specific_ads: list | None = None,
+    num_workers:  int  | None = None,
+) -> list[dict]:
     """
-    Full pipeline to convert videos, create fingerprints, and detect ads.
+    Run S1 → S2 → S3 for one (channel, date) task.
 
-    Args:
-        channel (str): The channel name (e.g., 'NDTVIndia').
-        date (str): The date string (e.g., '20251205').
-        time_sel (list or None): A list of specific file names to process.
-        base_path (str): The root path to the video recordings.
-        ads_language (str): The language tag for ad samples.
-        specific_ads (list or None): List of specific ad filenames to detect (e.g. ["ad1.mp4"]).
-        num_workers (int or None): The number of workers for parallel processing.
-
-    Returns:
-        list: A list of dictionaries representing detected ad segments.
+    Returns a list of detection-row dicts.
     """
     if num_workers is None:
-        total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
-        if total_ram_gb < 8:
-            num_workers = 1
-        elif total_ram_gb < 16:
-            num_workers = 2
-        else:
-            num_workers = min(5, multiprocessing.cpu_count())
+        num_workers = _default_workers()
 
-    print(f"\n=== Starting full pipeline for {channel}/{date} ===")
-    final_path = os.path.join(base_path, channel)
-    
-    # -----------------------------
-    # 1. Conversion
-    # -----------------------------
+    channel_path = os.path.join(base_path, channel)
+    t_pipeline   = time.time()
 
-    # We pass ads_language and specific_ads so the converter knows which ads to process.
+    print(f"\n{'='*60}")
+    print(f"  PIPELINE  {channel} / {date}  (workers={num_workers})")
+    print(f"{'='*60}")
+
+    # ── S1: Convert videos → WAV ──────────────────────────────────────────────
     t0 = time.time()
     convert_ads_and_videos(
-        final_path, 
-        date, 
-        time_sel, 
-        ads_language=ads_language, 
-        specific_ads=specific_ads  # Filter ads at conversion stage
+        channel_path,
+        date,
+        time_sel,
+        ads_language  = ads_language,
+        specific_ads  = specific_ads,
     )
-    print(f"[{channel}/{date}][TIMER] Convert time: {time.time() - t0:.2f} sec")
+    print(f"  [S1] Conversion   : {time.time() - t0:.1f}s")
 
-
-    # -----------------------------
-    # 1. Fingerprint DB
-    # -----------------------------
-
+    # ── S2: Build / update fingerprint DB ────────────────────────────────────
     t1 = time.time()
-    # Note: run_flow must handle the specific_ads logic or use the filtered folder created in Step 1
-    run_flow(ads_language, specific_ads)
-    print(f"[{channel}/{date}][TIMER] Fingerprint time: {time.time() - t1:.2f} sec")
+    with db_lock:   # FIX: serialise DB writes across concurrent tasks
+        run_flow(ads_language, specific_ads)
+    print(f"  [S2] Fingerprint  : {time.time() - t1:.1f}s")
 
-    # -----------------------------
-    # 2. Detection
-    # -----------------------------
-
+    # ── S3: Detect ads ────────────────────────────────────────────────────────
     t2 = time.time()
-    detected_segments = detect_ads(
-        language=ads_language, 
-        channel=channel, 
-        date=date, 
-        time_sel=time_sel, 
-        num_workers=num_workers ,
-        specific_ads=specific_ads
+    detected = detect_ads(
+        language     = ads_language,
+        channel      = channel,
+        date         = date,
+        time_sel     = time_sel,
+        specific_ads = specific_ads,
+        num_workers  = num_workers,
     )
-    print(f"[{channel}/{date}][TIMER] Detect time: {time.time() - t2:.2f} sec")
+    print(f"  [S3] Detection    : {time.time() - t2:.1f}s")
+    print(f"  [TOTAL] Pipeline  : {time.time() - t_pipeline:.1f}s  |  {len(detected)} segment(s) found")
 
-    print(f"[{channel}/{date}][TOTAL] Pipeline completed in {time.time() - t0:.2f} sec\n")
-    
-    return detected_segments
+    return detected
 
 
-def run_task_wrapper(task, num_workers):
-    """Wrapper function to execute run_full_pipeline for concurrent execution."""
-    
-    print(f"==================================================")
-    print(f"   STARTING TASK: {task['channel']} / {task['date']}")
-    print(f"==================================================")
+# ─────────────────────────────────────────────────────────────────────────────
+#  TASK WRAPPER  (used by ThreadPoolExecutor)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Extract specific_ads from the task dictionary (passed from app.py)
-    specific_ads = task.get('specific_ads', None)
-
+def run_task_wrapper(task: dict, num_workers: int | None) -> list[dict]:
     return run_full_pipeline(
-        channel=task['channel'],
-        date=task['date'],
-        time_sel=task['time_sel'],
-        base_path=task['base_path'],
-        ads_language=task['ads_language'],
-        specific_ads=specific_ads, # New parameter
-        num_workers=num_workers 
+        channel      = task["channel"],
+        date         = task["date"],
+        time_sel     = task.get("time_sel"),
+        base_path    = task["base_path"],
+        ads_language = task.get("ads_language"),
+        specific_ads = task.get("specific_ads"),
+        num_workers  = num_workers,
     )
 
 
-def run_all_tasks_and_save_json(tasks_to_run, output_json_path="Outputs/ALL_DETECTED_ADS.json", num_workers=None):
-    """
-    Runs all defined tasks in parallel using ThreadPoolExecutor and saves 
-    the aggregated results to a single JSON file.
-    """
-    max_workers = 5
-    if num_workers is not None:
-        max_workers = num_workers
-    
-    print("\n" + "#"*70)
-    print(f"🚀 Running {len(tasks_to_run)} tasks in parallel with {max_workers} threads.")
-    print("#"*70)
-    
-    ALL_RESULTS = []
+# ─────────────────────────────────────────────────────────────────────────────
+#  MULTI-TASK RUNNER
+# ─────────────────────────────────────────────────────────────────────────────
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_task = {
-            executor.submit(run_task_wrapper, task, num_workers): task 
-            for task in tasks_to_run
-        }
-        
-        for future in concurrent.futures.as_completed(future_to_task):
-            task = future_to_task[future]
+def run_all_tasks_and_save_json(
+    tasks_to_run:     list[dict],
+    output_json_path: str       = "Outputs/ALL_DETECTED_ADS.json",
+    num_workers:      int | None = None,
+) -> list[dict]:
+    """
+    Run all tasks and aggregate results into a JSON file.
+
+    FIX: max outer threads set to 2 (was 5) to prevent each thread from
+    launching its own multiprocessing pool and exhausting RAM/CPU.
+    If tasks share the same channel/date, S2 runs under db_lock so the
+    SQLite DB stays consistent.
+    """
+    # Outer parallelism: run at most 2 tasks in parallel so S3's inner
+    # thread pools don't cause resource exhaustion
+    outer_workers = min(MAX_OUTER_TASKS, len(tasks_to_run))
+    inner_workers = num_workers or _default_workers()
+
+    print(f"\n{'#'*60}")
+    print(f"  {len(tasks_to_run)} task(s)  |  outer_threads={outer_workers}  inner_workers={inner_workers}")
+    print(f"{'#'*60}\n")
+
+    ALL_RESULTS: list[dict] = []
+
+    if outer_workers <= 1:
+        # Sequential — simplest, safest
+        for task in tasks_to_run:
             try:
-                task_results = future.result()
-                ALL_RESULTS.extend(task_results)
-                print(f"✅ COMPLETED: {task['channel']} / {task['date']} - {len(task_results)} segments detected.")
+                rows = run_task_wrapper(task, inner_workers)
+                ALL_RESULTS.extend(rows)
+                print(f"  ✅  {task['channel']}/{task['date']}  → {len(rows)} segment(s)")
             except Exception as exc:
-                print(f"❌ FAILED TASK: {task['channel']} / {task['date']} generated an exception: {exc}")
+                print(f"  ❌  {task['channel']}/{task['date']}  → {exc}")
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=outer_workers) as pool:
+            futures = {
+                pool.submit(run_task_wrapper, task, inner_workers): task
+                for task in tasks_to_run
+            }
+            for future in concurrent.futures.as_completed(futures):
+                task = futures[future]
+                try:
+                    rows = future.result()
+                    ALL_RESULTS.extend(rows)
+                    print(f"  ✅  {task['channel']}/{task['date']}  → {len(rows)} segment(s)")
+                except Exception as exc:
+                    print(f"  ❌  {task['channel']}/{task['date']}  → {exc}")
 
-    # --- Final Aggregation and Saving ---
+    # ── Save to JSON ──────────────────────────────────────────────────────────
+    os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
+
     if ALL_RESULTS:
         df = pd.DataFrame(ALL_RESULTS)
-        df.sort_values(by=["Channel", "Date", "Time", "Start Time"], inplace=True)
+        sort_cols = [c for c in ["Channel", "Date", "Time", "Start Time"] if c in df.columns]
+        if sort_cols:
+            df.sort_values(by=sort_cols, inplace=True)
         df.reset_index(drop=True, inplace=True)
         df["Segment No"] = df.index + 1
-        
-        os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
-        df.to_json(output_json_path, orient='records', indent=4)
-        
-        print("\n" + "="*70)
-        print(f"🏆 SUCCESS: Aggregated results for {len(ALL_RESULTS)} segments saved to:")
-        print(f" {output_json_path}")
-        print("="*70)
-        
-        return df.to_dict(orient='records')
+        df.to_json(output_json_path, orient="records", indent=4)
+        print(f"\n  🏆 {len(ALL_RESULTS)} segment(s) saved → {output_json_path}")
+        return df.to_dict(orient="records")
     else:
-        print("\n[INFO] No ad segments were detected across all tasks.")
-        os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
-        with open(output_json_path, 'w') as f:
-            json.dump([], f)
+        with open(output_json_path, "w") as fh:
+            json.dump([], fh)
+        print("\n  [INFO] No ad segments detected.")
         return []

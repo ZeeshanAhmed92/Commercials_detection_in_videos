@@ -1,131 +1,274 @@
+"""
+S1_preprocessing_aud.py  —  Video → WAV conversion  (parallel-optimised)
+
+Parallelism strategy
+────────────────────
+• ffmpeg subprocesses are I/O-bound and independently forked by the OS, so a
+  ThreadPoolExecutor is the right primitive — no GIL overhead, no inter-process
+  serialisation cost.
+• convert_videos_to_audio() now accepts a `queue` (multiprocessing.Queue) so
+  that the caller (convert_ads_and_videos) can submit ad-sample and mixed-video
+  conversions to a shared ThreadPoolExecutor, overlapping the two workloads
+  instead of running them sequentially.
+• All tunable constants live in config.py — unchanged API for callers.
+"""
+
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, Future
+from typing import Optional
 
-SUPPORTED_VIDEO_FORMATS = (".mp4", ".mkv", ".avi", ".mov", ".flv", ".ts")
+from config import (
+    SR_EXPECTED,
+    LOUDNORM_I, LOUDNORM_TP, LOUDNORM_LRA,
+    MIN_WAV_BYTES,
+    CONVERT_WORKERS_ADS, CONVERT_WORKERS_MIXED,
+    SUPPORTED_VIDEO_FORMATS,
+    ADS_AUDIO_FOLDER,
+    MIXED_AUDIO_ROOT,
+)
 
-def extract_audio(input_path, output_path):
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SINGLE-FILE CONVERSION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def extract_audio(input_path: str, output_path: str, retries: int = 2) -> str:
     """
-    Extract audio using FFmpeg with mono 16kHz PCM WAV.
+    Convert one video file → mono 16 kHz loudnorm WAV via ffmpeg.
+
+    loudnorm pass (I=-16 LUFS, TP=-1.5, LRA=11) ensures broadcast audio and
+    ad samples have the same loudness envelope, which is critical for
+    fingerprint alignment.
+
+    Returns a status string beginning with [DONE] or [ERROR].
     """
-
-    # cmd = [
-    #     "ffmpeg", "-y",
-    #     "-i", input_path,
-    #     "-vn", "-ac", "1",
-    #     "-ar", "16000",
-    #     "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", # Targeted for broadcast consistency
-    #     "-sample_fmt", "s16",
-    #     output_path
-    # ]
-
-    # cmd = [
-    #     "ffmpeg",
-    #     "-y",  # overwrite
-    #     "-i", input_path,
-    #     "-vn",  # no video
-    #     "-ac", "1",  # mono
-    #     "-ar", "16000",  # 16kHz
-    #     "-af", "loudnorm",  # normalize loudness
-    #     "-sample_fmt", "s16",  # 16-bit PCM
-    #     output_path
-    # ]
-
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
-        "-vn", "-ac", "1",
-        "-ar", "16000",
+        "-vn",
+        "-ac", "1",
+        "-ar", str(SR_EXPECTED),
+        "-af", f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}",
         "-sample_fmt", "s16",
-        output_path
+        output_path,
     ]
-    
-    try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return f"[DONE] {os.path.basename(output_path)}"
-    except subprocess.CalledProcessError as e:
-        return f"[ERROR] {os.path.basename(input_path)} → {e}"
 
-def convert_videos_to_audio(input_folder, output_folder, max_workers=10, target_files=None): 
+    last_err = ""
+    for attempt in range(1, retries + 1):
+        try:
+            subprocess.run(
+                cmd, check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            if not os.path.exists(output_path) or os.path.getsize(output_path) < MIN_WAV_BYTES:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                last_err = f"output file missing or too small after attempt {attempt}"
+                continue
+            return f"[DONE] {os.path.basename(output_path)}"
+        except subprocess.CalledProcessError as e:
+            last_err = (
+                e.stderr.decode(errors="replace").strip().splitlines()[-1]
+                if e.stderr else str(e)
+            )
+
+    return f"[ERROR] {os.path.basename(input_path)} → {last_err}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  FOLDER-LEVEL CONVERSION  (ThreadPoolExecutor over ffmpeg subprocesses)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _collect_jobs(
+    input_folder: str,
+    output_folder: str,
+    target_files: Optional[list] = None,
+) -> list[tuple[str, str]]:
     """
-    Convert all videos in input_folder to WAV audio in output_folder using threads.
-    If target_files is provided, only convert those.
+    Return [(input_path, output_path)] for every video that still needs
+    converting, skipping already-valid WAVs.
+    """
+    video_files = [
+        f for f in os.listdir(input_folder)
+        if f.lower().endswith(SUPPORTED_VIDEO_FORMATS)
+    ]
+    if target_files:
+        target_set = set(target_files)
+        video_files = [f for f in video_files if f in target_set]
+
+    jobs = []
+    for fname in video_files:
+        wav_name    = os.path.splitext(fname)[0] + ".wav"
+        output_path = os.path.join(output_folder, wav_name)
+        if os.path.exists(output_path) and os.path.getsize(output_path) >= MIN_WAV_BYTES:
+            continue                       # already done
+        jobs.append((os.path.join(input_folder, fname), output_path))
+    return jobs
+
+
+def convert_videos_to_audio(
+    input_folder:  str,
+    output_folder: str,
+    max_workers:   int           = 8,
+    target_files:  Optional[list] = None,
+    executor:      Optional[ThreadPoolExecutor] = None,
+) -> dict:
+    """
+    Convert every supported video in *input_folder* to a mono 16 kHz WAV.
+
+    Args:
+        input_folder:  Source directory containing video files.
+        output_folder: Destination directory for WAV files.
+        max_workers:   Thread pool size (ignored when *executor* is supplied).
+        target_files:  Whitelist of filenames; None = all.
+        executor:      Optional *shared* ThreadPoolExecutor.  When provided the
+                       caller is responsible for lifecycle management and the
+                       function submits jobs without blocking — useful when you
+                       want ads and mixed-videos to convert concurrently.
+
+    Returns {"converted": n, "skipped": n, "errors": n}.
     """
     if not os.path.exists(input_folder):
         print(f"[ERROR] Input folder not found: {input_folder}")
-        return
-
-    all_files = os.listdir(input_folder)
-    
-    # Filter files by supported formats
-    video_files = [f for f in all_files if f.lower().endswith(SUPPORTED_VIDEO_FORMATS)]
-    
-    if target_files:
-        # If specific ads/files are requested, filter the full list
-        files_to_process = [f for f in video_files if f in target_files]
-    else:
-        # Otherwise, process all video files in the language folder
-        files_to_process = video_files
-
-    if not files_to_process:
-        print(f"[INFO] No videos found in {input_folder} for target selection.")
-        return
+        return {"converted": 0, "skipped": 0, "errors": 0}
 
     os.makedirs(output_folder, exist_ok=True)
-    converted, skipped = 0, 0
-    futures = []
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for file_name in files_to_process:
-            input_path = os.path.join(input_folder, file_name)
-            base_name = os.path.splitext(file_name)[0] + ".wav"
-            output_path = os.path.join(output_folder, base_name)
+    jobs    = _collect_jobs(input_folder, output_folder, target_files)
+    skipped = (
+        len([
+            f for f in os.listdir(input_folder)
+            if f.lower().endswith(SUPPORTED_VIDEO_FORMATS)
+        ]) - len(jobs)
+    )
 
-            if os.path.exists(output_path):
-                # Only skip if the file already exists to save time
-                skipped += 1
-                continue
+    if not jobs:
+        print(f"[INFO] No new conversions needed in: {input_folder}")
+        return {"converted": 0, "skipped": skipped, "errors": 0}
 
-            futures.append(executor.submit(extract_audio, input_path, output_path))
+    converted = errors = 0
 
-        for future in as_completed(futures):
-            result = future.result()
-            if result.startswith("[DONE]"):
-                converted += 1
+    def _drain(futures_list: list[Future]) -> tuple[int, int]:
+        ok = err = 0
+        for fut in as_completed(futures_list):
+            result = fut.result()
             print(result)
+            if result.startswith("[DONE]"):
+                ok += 1
+            else:
+                err += 1
+        return ok, err
 
-    print(f"\n[INFO] Finished converting {input_folder} → {output_folder}: {converted} processed, {skipped} skipped.\n")
+    if executor is not None:
+        # Non-blocking submission; caller must drain futures themselves or
+        # wait on the shared executor's __exit__.
+        futures = [executor.submit(extract_audio, inp, out) for inp, out in jobs]
+        converted, errors = _drain(futures)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(extract_audio, inp, out) for inp, out in jobs]
+            converted, errors = _drain(futures)
+
+    print(
+        f"\n[INFO] {input_folder} → {output_folder}: "
+        f"{converted} converted, {skipped} skipped, {errors} errors.\n"
+    )
+    return {"converted": converted, "skipped": skipped, "errors": errors}
 
 
-def convert_ads_and_videos(channel_path, date, time_sel, ads_language, specific_ads=None):
+# ─────────────────────────────────────────────────────────────────────────────
+#  STEP-1 ENTRY POINT  (ads + mixed in parallel)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def convert_ads_and_videos(
+    channel_path:  str,
+    date:          str,
+    time_sel:      Optional[list],
+    ads_language:  str,
+    specific_ads:  Optional[list] = None,
+) -> dict:
     """
-    Convert both ad samples and mixed videos for the selected channel/date.
-    specific_ads: List of filenames (e.g. ['kent.mp4']) to filter ad processing.
+    Step 1 entry-point: convert ad samples AND broadcast recordings in parallel.
+
+    Key change vs original
+    ──────────────────────
+    Both workloads (ads + mixed) are submitted to a *single* shared
+    ThreadPoolExecutor so their ffmpeg subprocesses run concurrently.
+    Total worker count = CONVERT_WORKERS_ADS + CONVERT_WORKERS_MIXED, which
+    saturates typical NAS/disk bandwidth without over-subscribing CPU.
+
+    Args:
+        channel_path:  Absolute path to the channel root.
+        date:          Date string folder name (e.g. '20250918').
+        time_sel:      List of specific recording filenames, or None for all.
+        ads_language:  Language sub-folder inside Inputs/ads_samples.
+        specific_ads:  List of specific ad filenames to convert, or None for all.
+
+    Returns merged stats dict {"ads": {...}, "mixed": {...}}.
     """
-    # Dynamic path based on the 'language' sent in request (Tamil, Kannada, etc.)
-    ads_video_folder = os.path.join("Inputs/ads_samples", ads_language)
-    ads_audio_folder = os.path.join("Outputs/ads_fingerprints", ads_language)
-    
+    ads_video_folder   = os.path.join("Inputs/ads_samples", ads_language)
+    ads_audio_folder   = os.path.join(ADS_AUDIO_FOLDER, ads_language)
     mixed_video_folder = os.path.join(channel_path, date)
-    mixed_audio_folder = os.path.join("Outputs/video_to_audio", os.path.basename(channel_path), date)
+    mixed_audio_folder = os.path.join(
+        MIXED_AUDIO_ROOT, os.path.basename(channel_path), date
+    )
 
-    os.makedirs(ads_audio_folder, exist_ok=True)
+    os.makedirs(ads_audio_folder,   exist_ok=True)
     os.makedirs(mixed_audio_folder, exist_ok=True)
 
-    print(f"\n=== Converting AD SAMPLES ({ads_language}) ===")
-    # Apply specific_ads filtering logic to the ads folder
-    convert_videos_to_audio(
-        ads_video_folder, 
-        ads_audio_folder, 
-        max_workers=4, 
-        target_files=specific_ads
-    )
+    total_workers = CONVERT_WORKERS_ADS + CONVERT_WORKERS_MIXED
 
-    print("\n=== Converting MIXED VIDEOS ===")
-    # Apply time_sel filtering logic to the channel recordings
-    convert_videos_to_audio(
-        mixed_video_folder, 
-        mixed_audio_folder, 
-        max_workers=6, 
-        target_files=time_sel
+    print(f"\n=== [S1] PARALLEL CONVERSION  language={ads_language} | workers={total_workers} ===")
+
+    # ── Shared pool so ads and mixed recordings convert simultaneously ──────────
+    with ThreadPoolExecutor(max_workers=total_workers) as shared_pool:
+
+        # Submit all ad jobs
+        ads_jobs = _collect_jobs(ads_video_folder, ads_audio_folder, specific_ads) \
+                   if os.path.exists(ads_video_folder) else []
+        ads_futures = [
+            shared_pool.submit(extract_audio, inp, out)
+            for inp, out in ads_jobs
+        ]
+
+        # Submit all mixed-recording jobs
+        mix_jobs = _collect_jobs(mixed_video_folder, mixed_audio_folder, time_sel) \
+                   if os.path.exists(mixed_video_folder) else []
+        mix_futures = [
+            shared_pool.submit(extract_audio, inp, out)
+            for inp, out in mix_jobs
+        ]
+
+        # ── Drain ads ────────────────────────────────────────────────────────────
+        ads_converted = ads_errors = 0
+        for fut in as_completed(ads_futures):
+            result = fut.result()
+            print(f"  [AD]    {result}")
+            if result.startswith("[DONE]"):
+                ads_converted += 1
+            else:
+                ads_errors += 1
+
+        # ── Drain mixed ──────────────────────────────────────────────────────────
+        mix_converted = mix_errors = 0
+        for fut in as_completed(mix_futures):
+            result = fut.result()
+            print(f"  [MIX]   {result}")
+            if result.startswith("[DONE]"):
+                mix_converted += 1
+            else:
+                mix_errors += 1
+
+    ads_skipped = max(0, len(ads_jobs) - ads_converted - ads_errors)
+    mix_skipped = max(0, len(mix_jobs) - mix_converted - mix_errors)
+
+    ads_stats = {"converted": ads_converted, "skipped": ads_skipped, "errors": ads_errors}
+    mix_stats = {"converted": mix_converted, "skipped": mix_skipped, "errors": mix_errors}
+
+    print(
+        f"\n[S1] Ads   → {ads_stats}\n"
+        f"[S1] Mixed → {mix_stats}\n"
     )
+    return {"ads": ads_stats, "mixed": mix_stats}

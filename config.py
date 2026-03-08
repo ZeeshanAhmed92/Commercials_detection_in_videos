@@ -41,7 +41,7 @@ SUPPORTED_VIDEO_FORMATS = (
 # ═══════════════════════════════════════════════════════════════════════════════
 
 N_FFT                  = 2048
-HOP_LENGTH             = 512
+HOP_LENGTH             = 256
 AMP_MIN_DB             = -75     # peaks below this dB (rel to max) are ignored
 PEAK_NEIGHBORHOOD_FREQ = 30      # frequency neighborhood size (bins)
 PEAK_NEIGHBORHOOD_TIME = 15      # time neighborhood size (frames)
@@ -54,7 +54,7 @@ PEAK_NEIGH_TIME = PEAK_NEIGHBORHOOD_TIME
 #  FINGERPRINT GENERATION  (S2 & S3 — MUST BE IDENTICAL)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FAN_VALUE        = 20            # neighbor peaks paired per anchor point
+FAN_VALUE        = 30            # neighbor peaks paired per anchor point
 MAX_TIME_DELTA   = 200           # max frame gap between paired peaks
 HASH_TRUNCATE    = 20            # SHA-1 hex chars stored per hash
 
@@ -71,13 +71,13 @@ BATCH_INSERT_SIZE = 4_000        # fingerprint rows per SQLite commit
 # ═══════════════════════════════════════════════════════════════════════════════
 
 DELTA_BIN_SIZE     = HOP_LENGTH / SR_EXPECTED   # ~0.032 s — 1 hop frame
-MIN_DETECTION_SEC  = 0.6         # discard detections shorter than this
-MIN_CONFIDENCE     = 0.55        # minimum hash-match score to keep a candidate
-MERGE_GAP          = 3.0         # merge detections of same ad within this gap (s)
+MIN_DETECTION_SEC  = 1          # discard detections shorter than this
+MIN_CONFIDENCE     = 0.70        # minimum hash-match score to keep a candidate
+MERGE_GAP          = 3.0        # merge detections of same ad within this gap (s)
 
 # Boundary refinement (cross-correlation)
 LOCAL_MARGIN       = 3.0         # search window around coarse boundary (s)
-CORR_THRESHOLD     = 0.3        # minimum normalised correlation to accept refinement
+CORR_THRESHOLD     = 0.5        # minimum normalised correlation to accept refinement
 
 # Full / Partial classification
 FULL_DUR_TOLERANCE = 0.5         # ± seconds from reference duration → "Full"

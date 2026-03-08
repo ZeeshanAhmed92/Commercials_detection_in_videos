@@ -452,10 +452,46 @@ def detect_for_file(
             if os.path.exists(ad_path) else None
         )
 
+    # def _refine_one(det: dict) -> dict:
+    #     ad_id  = det["ad_id"]
+    #     ad_y   = ad_audio[ad_id]
+    #     ad_dur = ad_durations.get(ad_id)
+    #     if ad_y is not None:
+    #         refined_s, refined_e = refine_boundaries(
+    #             y, ad_y, sr0, det["coarse_s"], det["coarse_e"], canonical_dur=ad_dur
+    #         )
+    #     else:
+    #         refined_s, refined_e = det["coarse_s"], det["coarse_e"]
+
+    #     actual_dur = refined_e - refined_s
+    #     if (
+    #         ad_dur is not None
+    #         and abs(actual_dur - ad_dur) < FULL_DUR_TOLERANCE
+    #         and det["score"] >= FULL_SCORE_FLOOR
+    #     ):
+    #         typ       = "Full"
+    #         final_dur = ad_dur
+    #         final_e   = refined_s + ad_dur
+    #     else:
+    #         typ       = "Partial"
+    #         final_dur = actual_dur
+    #         final_e   = refined_e
+
+    #     return {
+    #         "ad_id":    ad_id,
+    #         "start":    max(0.0, refined_s),
+    #         "end":      min(total_dur, final_e),
+    #         "duration": round(final_dur, 3),
+    #         "score":    round(det["score"], 3),
+    #         "type":     typ,
+    #     }
+
     def _refine_one(det: dict) -> dict:
         ad_id  = det["ad_id"]
         ad_y   = ad_audio[ad_id]
         ad_dur = ad_durations.get(ad_id)
+        
+        # 1. Perform cross-correlation to find the actual signal match
         if ad_y is not None:
             refined_s, refined_e = refine_boundaries(
                 y, ad_y, sr0, det["coarse_s"], det["coarse_e"], canonical_dur=ad_dur
@@ -463,25 +499,24 @@ def detect_for_file(
         else:
             refined_s, refined_e = det["coarse_s"], det["coarse_e"]
 
+        # 2. Use the ACTUAL detected duration from the refinement
         actual_dur = refined_e - refined_s
-        if (
-            ad_dur is not None
+        
+        # 3. Determine if it's "Full" or "Partial" for labeling ONLY
+        # We no longer force final_dur = ad_dur
+        is_full_length = (
+            ad_dur is not None 
             and abs(actual_dur - ad_dur) < FULL_DUR_TOLERANCE
-            and det["score"] >= FULL_SCORE_FLOOR
-        ):
-            typ       = "Full"
-            final_dur = ad_dur
-            final_e   = refined_s + ad_dur
-        else:
-            typ       = "Partial"
-            final_dur = actual_dur
-            final_e   = refined_e
+        )
+        is_high_score = det["score"] >= FULL_SCORE_FLOOR
+
+        typ = "Full" if (is_full_length and is_high_score) else "Partial"
 
         return {
             "ad_id":    ad_id,
             "start":    max(0.0, refined_s),
-            "end":      min(total_dur, final_e),
-            "duration": round(final_dur, 3),
+            "end":      min(total_dur, refined_e), # Exact detected end time
+            "duration": round(actual_dur, 3),      # Exact detected duration
             "score":    round(det["score"], 3),
             "type":     typ,
         }
@@ -637,3 +672,4 @@ def detect_ads(
 
     print(f"[S3] Detected {len(all_rows)} segment(s) in {channel}/{date}.")
     return all_rows
+

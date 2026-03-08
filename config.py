@@ -42,9 +42,9 @@ SUPPORTED_VIDEO_FORMATS = (
 
 N_FFT                  = 2048
 HOP_LENGTH             = 512
-AMP_MIN_DB             = -65     # peaks below this dB (rel to max) are ignored
-PEAK_NEIGHBORHOOD_FREQ = 20      # frequency neighborhood size (bins)
-PEAK_NEIGHBORHOOD_TIME = 10      # time neighborhood size (frames)
+AMP_MIN_DB             = -75     # peaks below this dB (rel to max) are ignored
+PEAK_NEIGHBORHOOD_FREQ = 30      # frequency neighborhood size (bins)
+PEAK_NEIGHBORHOOD_TIME = 15      # time neighborhood size (frames)
 # Short aliases (used in S3)
 PEAK_NEIGH_FREQ = PEAK_NEIGHBORHOOD_FREQ
 PEAK_NEIGH_TIME = PEAK_NEIGHBORHOOD_TIME
@@ -76,12 +76,12 @@ MIN_CONFIDENCE     = 0.55        # minimum hash-match score to keep a candidate
 MERGE_GAP          = 3.0         # merge detections of same ad within this gap (s)
 
 # Boundary refinement (cross-correlation)
-LOCAL_MARGIN       = 2.0         # search window around coarse boundary (s)
-CORR_THRESHOLD     = 0.25        # minimum normalised correlation to accept refinement
+LOCAL_MARGIN       = 3.0         # search window around coarse boundary (s)
+CORR_THRESHOLD     = 0.3        # minimum normalised correlation to accept refinement
 
 # Full / Partial classification
-FULL_DUR_TOLERANCE = 1.5         # ± seconds from reference duration → "Full"
-FULL_SCORE_FLOOR   = 0.90        # minimum score to classify as "Full"
+FULL_DUR_TOLERANCE = 0.5         # ± seconds from reference duration → "Full"
+FULL_SCORE_FLOOR   = 0.95        # minimum score to classify as "Full"
 
 BULK_SQL_IN_CHUNK  = 5_000
 

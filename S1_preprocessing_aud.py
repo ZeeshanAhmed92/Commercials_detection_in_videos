@@ -43,15 +43,25 @@ def extract_audio(input_path: str, output_path: str, retries: int = 2) -> str:
 
     Returns a status string beginning with [DONE] or [ERROR].
     """
+    # cmd = [
+    #     "ffmpeg", "-y",
+    #     "-i", input_path,
+    #     "-vn",
+    #     "-ac", "1",
+    #     "-ar", str(SR_EXPECTED),
+    #     "-af", f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}",
+    #     "-sample_fmt", "s16",
+    #     output_path,
+    # ]
+
     cmd = [
         "ffmpeg", "-y",
+        "-threads", "0",
         "-i", input_path,
-        "-vn",
-        "-ac", "1",
-        "-ar", str(SR_EXPECTED),
-        "-af", f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}",
+        "-vn", "-ac", "1",
+        "-ar", "16000",
         "-sample_fmt", "s16",
-        output_path,
+        output_path
     ]
 
     last_err = ""

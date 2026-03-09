@@ -12,7 +12,6 @@ import os
 # ═══════════════════════════════════════════════════════════════════════════════
 
 BASE_PATH        = "//192.168.39.7/mps/disk1/disk1-recordings"
-# BASE_PATH = "./"
 ADS_SAMPLES_PATH = "Inputs/ads_samples"
 ADS_AUDIO_FOLDER = "Outputs/ads_fingerprints"
 MIXED_AUDIO_ROOT = "Outputs/video_to_audio"
@@ -30,7 +29,7 @@ LOUDNORM_TP      = -1.5          # true-peak ceiling (dBFS)
 LOUDNORM_LRA     = 11            # loudness range (LU)
 MIN_WAV_BYTES    = 16_000        # minimum valid output file size
 CONVERT_WORKERS_ADS   = 6        # ffmpeg threads for ad samples
-CONVERT_WORKERS_MIXED = 8        # ffmpeg threads for mixed recordings
+CONVERT_WORKERS_MIXED = 11        # ffmpeg threads for mixed recordings
 SUPPORTED_VIDEO_FORMATS = (
     ".mp4", ".mkv", ".avi", ".mov", ".flv", ".ts", ".mpeg"
 )
@@ -41,7 +40,7 @@ SUPPORTED_VIDEO_FORMATS = (
 # ═══════════════════════════════════════════════════════════════════════════════
 
 N_FFT                  = 2048
-HOP_LENGTH             = 256
+HOP_LENGTH             = 512
 AMP_MIN_DB             = -80     # peaks below this dB (rel to max) are ignored
 PEAK_NEIGHBORHOOD_FREQ = 20      # frequency neighborhood size (bins)
 PEAK_NEIGHBORHOOD_TIME = 10      # time neighborhood size (frames)
@@ -54,7 +53,7 @@ PEAK_NEIGH_TIME = PEAK_NEIGHBORHOOD_TIME
 #  FINGERPRINT GENERATION  (S2 & S3 — MUST BE IDENTICAL)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FAN_VALUE        = 40            # neighbor peaks paired per anchor point
+FAN_VALUE        = 30            # neighbor peaks paired per anchor point
 MAX_TIME_DELTA   = 400           # max frame gap between paired peaks
 HASH_TRUNCATE    = 20            # SHA-1 hex chars stored per hash
 
@@ -90,7 +89,7 @@ BULK_SQL_IN_CHUNK  = 5_000
 #  PARALLELISM  (utils)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MAX_OUTER_TASKS    = 4           # concurrent pipeline tasks (each uses inner workers)
+MAX_OUTER_TASKS    = 2           # concurrent pipeline tasks (each uses inner workers)
 # Inner worker count is auto-detected from RAM at runtime (see utils._default_workers)
 
 

@@ -42,9 +42,9 @@ SUPPORTED_VIDEO_FORMATS = (
 
 N_FFT                  = 2048
 HOP_LENGTH             = 256
-AMP_MIN_DB             = -75     # peaks below this dB (rel to max) are ignored
-PEAK_NEIGHBORHOOD_FREQ = 30      # frequency neighborhood size (bins)
-PEAK_NEIGHBORHOOD_TIME = 15      # time neighborhood size (frames)
+AMP_MIN_DB             = -80     # peaks below this dB (rel to max) are ignored
+PEAK_NEIGHBORHOOD_FREQ = 20      # frequency neighborhood size (bins)
+PEAK_NEIGHBORHOOD_TIME = 10      # time neighborhood size (frames)
 # Short aliases (used in S3)
 PEAK_NEIGH_FREQ = PEAK_NEIGHBORHOOD_FREQ
 PEAK_NEIGH_TIME = PEAK_NEIGHBORHOOD_TIME
@@ -54,8 +54,8 @@ PEAK_NEIGH_TIME = PEAK_NEIGHBORHOOD_TIME
 #  FINGERPRINT GENERATION  (S2 & S3 — MUST BE IDENTICAL)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FAN_VALUE        = 30            # neighbor peaks paired per anchor point
-MAX_TIME_DELTA   = 200           # max frame gap between paired peaks
+FAN_VALUE        = 40            # neighbor peaks paired per anchor point
+MAX_TIME_DELTA   = 400           # max frame gap between paired peaks
 HASH_TRUNCATE    = 20            # SHA-1 hex chars stored per hash
 
 
@@ -63,7 +63,7 @@ HASH_TRUNCATE    = 20            # SHA-1 hex chars stored per hash
 #  DATABASE  (S2)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BATCH_INSERT_SIZE = 4_000        # fingerprint rows per SQLite commit
+BATCH_INSERT_SIZE = 5_000        # fingerprint rows per SQLite commit
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

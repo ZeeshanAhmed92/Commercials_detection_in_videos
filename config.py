@@ -177,7 +177,7 @@ BATCH_INSERT_SIZE = 5_000
 
 DELTA_BIN_SIZE     = HOP_LENGTH / SR_EXPECTED   # ~0.016 s — 1 hop frame
 MIN_DETECTION_SEC  = 1
-MIN_CONFIDENCE     = 0.70
+MIN_CONFIDENCE     = 0.50
 MERGE_GAP          = 3.0
 
 # Boundary refinement (cross-correlation)
@@ -201,7 +201,7 @@ REFINE_MIN_SCORE       = 0.0
 #  PARALLELISM  (utils)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MAX_OUTER_TASKS    = 2
+MAX_OUTER_TASKS    = 3
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

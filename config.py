@@ -118,7 +118,7 @@ import os
 #  PATHS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BASE_PATH        = "/run/user/1000/gvfs/smb-share:server=192.168.39.7,share=mps/disk1/disk1-recordings"
+BASE_PATH        = "/run/user/1000/gvfs/smb-share:server=192.168.39.4,share=mps/disk1/disk1-recordings"
 ADS_SAMPLES_PATH = "Inputs/ads_samples"
 ADS_AUDIO_FOLDER = "Outputs/ads_fingerprints"
 MIXED_AUDIO_ROOT = "Outputs/video_to_audio"

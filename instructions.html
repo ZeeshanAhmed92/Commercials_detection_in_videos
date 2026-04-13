@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ad Detection API</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Premium Dark Mode Palette */
+            --primary: #8b5cf6;       /* Violet */
+            --primary-light: #a78bfa;
+            --secondary: #f43f5e;     /* Rose */
+            --accent: #14b8a6;        /* Teal */
+            
+            --bg-body: #0f172a;       /* Slate 900 */
+            --bg-surface: #1e293b;    /* Slate 800 */
+            --bg-sidebar: #0b1120;    /* Darker Slate */
+            
+            /* Text Colors - Enforcing White/Bright */
+            --text-main: #ffffff;     /* Pure White */
+            --text-muted: #e2e8f0;    /* Off-white / Slate 200 */
+            --border: #334155;        /* Slate 700 */
+            
+            /* Badges */
+            --get-bg: rgba(59, 130, 246, 0.2); --get-text: #60a5fa; --get-border: #3b82f6;
+            --post-bg: rgba(34, 197, 94, 0.2); --post-text: #4ade80; --post-border: #22c55e;
+            
+            /* Code / Dark Mode */
+            --code-bg: #020617;       /* Slate 950 */
+            --code-text: #f8fafc;
+            --json-key: #7dd3fc;      /* Light Blue */
+            --json-string: #a7f3d0;   /* Light Green */
+            --json-number: #fbcfe8;   /* Light Pink */
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            line-height: 1.6;
+            display: flex;
+        }
+
+        /* --- Sidebar Navigation --- */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border);
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            overflow-y: auto;
+            padding: 2rem 1.5rem;
+            box-shadow: 4px 0 15px rgba(0,0,0,0.5);
+        }
+
+        .sidebar-brand {
+            font-size: 1.25rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-light), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sidebar h3 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            margin: 1.5rem 0 0.75rem 0;
+            opacity: 0.7;
+        }
+
+        .sidebar a {
+            display: block;
+            text-decoration: none;
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .sidebar a:hover {
+            background-color: var(--bg-surface);
+            color: var(--primary-light);
+            transform: translateX(3px);
+        }
+
+        /* --- Main Content Area --- */
+        .main-content {
+            margin-left: 280px;
+            padding: 3rem 4rem;
+            max-width: 1000px;
+            width: 100%;
+        }
+
+        /* --- Hero Header --- */
+        .hero {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: #ffffff;
+            padding: 3rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(139, 92, 246, 0.4);
+            margin-bottom: 3rem;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            top: -50%; right: -10%;
+            width: 300px; height: 300px;
+            background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
+            border-radius: 50%;
+        }
+
+        .hero h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem; color: #ffffff; }
+        .hero p { font-size: 1.1rem; opacity: 0.95; max-width: 600px; color: #ffffff; }
+
+        h2 { font-size: 1.8rem; margin: 3rem 0 1.5rem 0; color: var(--text-main); border-bottom: 2px solid var(--border); padding-bottom: 0.5rem;}
+        h3 { font-size: 1.3rem; margin: 2rem 0 1rem 0; color: var(--text-main); }
+        p { margin-bottom: 1rem; color: var(--text-muted); }
+
+        /* --- Cards & Workflow --- */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-surface);
+            padding: 1.5rem;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px -5px rgba(0,0,0,0.4);
+            border-color: var(--primary-light);
+        }
+
+        .card h4 { color: var(--primary-light); font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .card p { margin: 0; font-size: 0.95rem; color: var(--text-muted); }
+
+        /* --- API Endpoints --- */
+        .endpoint-block {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 2.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3);
+        }
+
+        .endpoint-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 1.25rem 1.5rem;
+            background: rgba(255,255,255,0.03);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .method-badge {
+            font-family: 'Fira Code', monospace;
+            font-weight: 700;
+            font-size: 0.85rem;
+            padding: 6px 12px;
+            border-radius: 6px;
+            letter-spacing: 0.05em;
+        }
+
+        .post { background: var(--post-bg); color: var(--post-text); border: 1px solid var(--post-border); }
+        .get { background: var(--get-bg); color: var(--get-text); border: 1px solid var(--get-border); }
+        
+        .endpoint-url {
+            font-family: 'Fira Code', monospace;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .endpoint-body { padding: 1.5rem; }
+        
+        /* --- Code Blocks --- */
+        pre {
+            background: var(--code-bg);
+            color: var(--code-text);
+            padding: 1.5rem;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin: 1rem 0;
+            border: 1px solid var(--border);
+        }
+
+        /* Fake syntax highlighting for JSON */
+        .key { color: var(--json-key); }
+        .str { color: var(--json-string); }
+        .num { color: var(--json-number); }
+        .bool { color: #fde047; }
+        .comment { color: #94a3b8; font-style: italic; }
+
+        /* --- Callouts --- */
+        .callout {
+            padding: 1.25rem;
+            border-radius: 12px;
+            margin: 2rem 0;
+            display: flex;
+            gap: 15px;
+            background: rgba(20, 184, 166, 0.1);
+            border-left: 5px solid var(--accent);
+            color: #ccfbf1;
+        }
+
+        .callout-icon { font-size: 1.5rem; }
+
+        /* --- Responsive --- */
+        @media (max-width: 900px) {
+            body { flex-direction: column; }
+            .sidebar {
+                width: 100%; height: auto; position: relative; border-right: none; border-bottom: 1px solid var(--border); padding: 1rem;
+            }
+            .main-content { margin-left: 0; padding: 2rem; max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            Ads API
+        </div>
+
+        <h3>Overview</h3>
+        <a href="#architecture">Architecture & Workflow</a>
+        <a href="#configuration">Configuration (config.py)</a>
+        
+        <h3>API Endpoints</h3>
+        <a href="#api-detect">Submit Detection Job</a>
+        <a href="#api-status">Check Job Status</a>
+        <a href="#api-jobs">List All Jobs</a>
+        <a href="#api-cancel">Cancel Job</a>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+        
+        <div class="hero">
+            <h1>Ad Detection Services API</h1>
+            <p>A high-performance, asynchronous audio fingerprinting API. Features int64 database optimization, thread-pool scaling, vectorized hashing, and safe background cancellations.</p>
+        </div>
+
+        <!-- Architecture Section -->
+        <h2 id="architecture">⚙️ Pipeline Architecture</h2>
+        <p>The application implements an optimized 3-stage asynchronous pipeline, driven by a concurrent semaphore manager.</p>
+        
+        <div class="grid">
+            <div class="card">
+                <h4>Stage 1: Preprocessing</h4>
+                <p><code>S1_preprocessing_aud.py</code> runs FFmpeg subprocesses via a ThreadPoolExecutor. Audio is extracted to 16kHz Mono and standardizes loudnorm targets dynamically to prep for fingerprinting.</p>
+            </div>
+            <div class="card">
+                <h4>Stage 2: SQLite Fingerprinting</h4>
+                <p><code>S2_fingerprint_db.py</code> converts spectrogram peaks into vectorized <b>int64 bitpacked keys</b> instead of SHA-1. Insertions use SQLite WAL mode safely guarded by <code>db_lock</code>.</p>
+            </div>
+            <div class="card">
+                <h4>Stage 3: Advanced Detection</h4>
+                <p><code>S3_scan_test_improved_latest.py</code> partitions hashes to search concurrently. Boundary refinement uses Scipy <code>fftconvolve</code> natively in C, releasing the Python GIL.</p>
+            </div>
+            <div class="card">
+                <h4>Job Orchestrator</h4>
+                <p><code>app.py</code> and <code>utils.py</code> track detailed per-channel queues. A semaphore (<code>MAX_OUTER_TASKS</code>) prevents OOM crashes. Real-time cancellation abruptly halts queued tasks.</p>
+            </div>
+        </div>
+
+        <div class="callout">
+            <div class="callout-icon">💡</div>
+            <div>
+                <strong>Int64 Hashing vs SHA-1:</strong><br>
+                The database natively stores fingerprints using a bitwise formula: <code>(f1 &lt;&lt; 40) | (f2 &lt;&lt; 20) | dt</code>. This provides a <b>10-20x speedup</b> over string-based SHA-1 lookup and drastically shrinks RAM footprint during large queries.
+            </div>
+        </div>
+
+        <!-- Configuration Section -->
+        <h2 id="configuration">🔧 Configuration Context</h2>
+        <p>Your <code>config.py</code> acts as the single source of truth for the entire pipeline. Constants are tuned for massive datasets:</p>
+        <pre><code><span class="comment"># Tunable Execution Limits</span>
+MAX_OUTER_TASKS = <span class="num">3</span>            <span class="comment"># Max concurrent channel/date combos</span>
+HASH_LOOKUP_CHUNKS = <span class="num">4</span>         <span class="comment"># S3 parallel hash lookup threads</span>
+REFINE_WORKERS = <span class="num">4</span>             <span class="comment"># Boundary refinement thread pool size</span>
+
+<span class="comment"># Signal Processing Tuning</span>
+AMP_MIN_DB = <span class="num">-75</span>
+MIN_CONFIDENCE = <span class="num">0.50</span>          <span class="comment"># Base hash-match score required</span>
+REFINE_SKIP_HIGH_SCORE = <span class="num">0.95</span>  <span class="comment"># Score threshold to bypass cross-correlation</span></code></pre>
+
+        <hr style="border: 0; border-bottom: 1px solid var(--border); margin: 3rem 0;">
+
+        <!-- API REFERENCE -->
+        <h2>🔌 API Reference</h2>
+
+        <!-- POST /detect -->
+        <div class="endpoint-block" id="api-detect">
+            <div class="endpoint-header">
+                <span class="method-badge post">POST</span>
+                <span class="endpoint-url">/detect</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Submits a new async job to run S1 → S2 → S3. Scans all files matching parameters.</p>
+                
+                <h3>Request Body</h3>
+                <pre><code>{
+    <span class="key">"channel"</span>: [<span class="str">"NewsChannel1"</span>],    <span class="comment">// Required. String or Array.</span>
+    <span class="key">"date"</span>: [<span class="str">"20240115"</span>],           <span class="comment">// Optional. Auto-detects if omitted.</span>
+    <span class="key">"language"</span>: [<span class="str">"Hindi"</span>],          <span class="comment">// Optional. Ad-sample subfolder.</span>
+    <span class="key">"time"</span>: [<span class="str">"09"</span>, <span class="str">"10"</span>],           <span class="comment">// Optional. "09" targets "09_00_00.mp4"</span>
+    <span class="key">"specific_ads"</span>: [<span class="str">"pepsi_ad"</span>]    <span class="comment">// Optional. Limit to exact ad filenames.</span>
+}</code></pre>
+                
+                <h3>Response <span style="color:var(--post-text); font-size:0.9rem; margin-left:10px;">202 Accepted</span></h3>
+                <pre><code>{
+    <span class="key">"status"</span>: <span class="str">"accepted"</span>,
+    <span class="key">"job_id"</span>: <span class="str">"8f7b2c9a-..."</span>,
+    <span class="key">"total_tasks"</span>: <span class="num">2</span>,
+    <span class="key">"message"</span>: <span class="str">"Job queued. Poll GET /job/{job_id} for live status."</span>
+}</code></pre>
+            </div>
+        </div>
+
+        <!-- GET /job/<job_id> -->
+        <div class="endpoint-block" id="api-status">
+            <div class="endpoint-header">
+                <span class="method-badge get">GET</span>
+                <span class="endpoint-url">/job/&lt;job_id&gt;</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Retrieves rich telemetry about a specific job, including sub-tasks (channels/dates).</p>
+                
+                <h3>Response <span style="color:var(--get-text); font-size:0.9rem; margin-left:10px;">200 OK</span></h3>
+                <pre><code>{
+    <span class="key">"job_id"</span>: <span class="str">"8f7b2c9a-..."</span>,
+    <span class="key">"status"</span>: <span class="str">"running"</span>,
+    <span class="key">"tasks_queued"</span>: <span class="num">1</span>,
+    <span class="key">"tasks_running"</span>: <span class="num">1</span>,
+    <span class="key">"tasks_done"</span>: <span class="num">0</span>,
+    <span class="key">"elapsed_sec"</span>: <span class="num">45.2</span>,
+    <span class="key">"output_file"</span>: <span class="str">"Outputs/API_Results/Detection_results.json"</span>,
+    <span class="key">"channels"</span>: [
+        {
+            <span class="key">"channel"</span>: <span class="str">"NewsChannel1"</span>,
+            <span class="key">"date"</span>: <span class="str">"20240115"</span>,
+            <span class="key">"language"</span>: <span class="str">"Hindi"</span>,
+            <span class="key">"status"</span>: <span class="str">"running"</span>,
+            <span class="key">"segments"</span>: <span class="key">null</span>,
+            <span class="key">"elapsed_sec"</span>: <span class="num">45.2</span>,
+            <span class="key">"error"</span>: <span class="key">null</span>
+        }
+    ]
+}</code></pre>
+            </div>
+        </div>
+
+        <!-- GET /jobs -->
+        <div class="endpoint-block" id="api-jobs">
+            <div class="endpoint-header">
+                <span class="method-badge get">GET</span>
+                <span class="endpoint-url">/jobs?status=running,queued</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Returns an aggregated list of all jobs in memory. You can optionally filter by status.</p>
+                
+                <h3>Response <span style="color:var(--get-text); font-size:0.9rem; margin-left:10px;">200 OK</span></h3>
+                <pre><code>{
+    <span class="key">"total"</span>: <span class="num">5</span>,
+    <span class="key">"jobs"</span>: [
+        {
+            <span class="key">"job_id"</span>: <span class="str">"8f7b2c9a-..."</span>,
+            <span class="key">"status"</span>: <span class="str">"done"</span>,
+            <span class="key">"tasks_done"</span>: <span class="num">2</span>,
+            <span class="key">"segments_detected"</span>: <span class="num">145</span>
+        }
+    ]
+}</code></pre>
+            </div>
+        </div>
+
+        <!-- POST /cancel -->
+        <div class="endpoint-block" id="api-cancel">
+            <div class="endpoint-header">
+                <span class="method-badge post">POST</span>
+                <span class="endpoint-url">/job/&lt;job_id&gt;/cancel</span>
+            </div>
+            <div class="endpoint-body">
+                <p>Requests immediate job cancellation. Queued items are instantly skipped. Running items execute to completion gracefully to prevent FFmpeg memory leaks, then mark themselves cancelled.</p>
+                
+                <h3>Response <span style="color:var(--post-text); font-size:0.9rem; margin-left:10px;">202 Accepted</span></h3>
+                <pre><code>{
+    <span class="key">"message"</span>: <span class="str">"Cancellation requested. Queued channels skipped immediately."</span>,
+    <span class="key">"job_id"</span>: <span class="str">"8f7b2c9a-..."</span>,
+    <span class="key">"status"</span>: <span class="str">"cancelling"</span>
+}</code></pre>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Smooth Scrolling Script -->
+    <script>
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+    </script>
+</body>
+</html>
